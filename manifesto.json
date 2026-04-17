@@ -9,5 +9,10 @@
     "arquivo": "robo_repasse_v6.py",
     "classe": "AppRepasse",
     "versao": "1.0.0"
+  },
+  "contratos": {
+    "arquivo": "bot_contratos.py",
+    "classe": "RoboContratosApp",
+    "versao": "1.0.0"
   }
 }
