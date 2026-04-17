@@ -24,6 +24,13 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 print("🚀 ROBÔ INICIADO")
 
+MAIN_BG = "#f6f4f1"
+CARD_BG = "#ffffff"
+PRIMARY_TEXT = "#d81919"
+MUTED_TEXT = "#5c5c5c"
+BUTTON_BG = "#ef1a14"
+BUTTON_ACTIVE_BG = "#c91410"
+
 def get_desktop_path():
     try:
         import winreg
@@ -214,6 +221,7 @@ class RoboContratosApp:
         self.root = tk.Tk()
         self.root.title("🤖 Robô de Contratos Coral - Desenvolvido por Diogo © 2026")
         self.root.geometry("1000x760")
+        self.root.configure(bg=MAIN_BG)
 
         desktop = get_desktop_path()
         pasta_padrao = os.path.join(desktop, "Contratos_Foco")
@@ -228,9 +236,36 @@ class RoboContratosApp:
         self.result_queue = queue.Queue()
         self.progress_var = tk.DoubleVar(value=0)
 
+        self.configurar_estilo()
         self.create_widgets()
 
+    def configurar_estilo(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("App.TFrame", background=MAIN_BG)
+        style.configure("TLabelframe", background=CARD_BG, borderwidth=1, relief="solid")
+        style.configure("TLabelframe.Label", background=CARD_BG, foreground=PRIMARY_TEXT, font=("Segoe UI", 10, "bold"))
+        style.configure("TLabel", background=CARD_BG, foreground="#303030", font=("Segoe UI", 10))
+        style.configure("Primary.TButton", background=BUTTON_BG, foreground="#ffffff", padding=(14, 8), font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.map("Primary.TButton", background=[("active", BUTTON_ACTIVE_BG), ("pressed", BUTTON_ACTIVE_BG)])
+        style.configure("Secondary.TButton", background="#ffffff", foreground=PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
+        style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", PRIMARY_TEXT)])
+
     def create_widgets(self):
+        header = tk.Frame(self.root, bg=MAIN_BG)
+        header.pack(fill="x", padx=12, pady=(12, 6))
+        tk.Label(header, text="Contratos FOCO", bg=MAIN_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 22, "bold")).pack()
+        tk.Label(
+            header,
+            text="Busca, reenvio e download de contratos com progresso em tempo real.",
+            bg=MAIN_BG,
+            fg=MUTED_TEXT,
+            font=("Segoe UI", 10)
+        ).pack(pady=(4, 0))
+
         # Login
         login_frame = ttk.LabelFrame(self.root, text="🔑 Login do Sistema", padding=10)
         login_frame.pack(fill="x", padx=10, pady=5)
@@ -262,7 +297,7 @@ class RoboContratosApp:
         self.label_progress.pack()
 
         # Botão Iniciar
-        self.btn_iniciar = ttk.Button(self.root, text="🚀 INICIAR ROBÔ", command=self.iniciar_robo, style="Accent.TButton")
+        self.btn_iniciar = ttk.Button(self.root, text="🚀 INICIAR ROBÔ", command=self.iniciar_robo, style="Primary.TButton")
         self.btn_iniciar.pack(pady=15)
 
         # Logs
@@ -271,7 +306,7 @@ class RoboContratosApp:
         self.log_text = scrolledtext.ScrolledText(log_frame, height=18, state='disabled', font=("Consolas", 10))
         self.log_text.pack(fill="both", expand=True)
 
-        ttk.Button(self.root, text="💾 Salvar Log", command=self.salvar_log).pack(pady=5)
+        ttk.Button(self.root, text="💾 Salvar Log", command=self.salvar_log, style="Secondary.TButton").pack(pady=5)
 
         ttk.Label(self.root, text="Desenvolvido por Diogo © 2026", foreground="gray").pack(pady=5)
 

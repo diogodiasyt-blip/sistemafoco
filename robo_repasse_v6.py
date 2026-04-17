@@ -36,6 +36,14 @@ PAUSA_CURTA = 1.0
 PAUSA_MEDIA = 2.0
 MAX_TENTATIVAS_POR_CONTRATO = 2
 
+MAIN_BG = "#f6f4f1"
+CARD_BG = "#ffffff"
+PRIMARY_TEXT = "#d81919"
+MUTED_TEXT = "#5c5c5c"
+BUTTON_BG = "#ef1a14"
+BUTTON_ACTIVE_BG = "#c91410"
+SUCCESS_TEXT = "#187a2f"
+
 
 class AppRepasse:
     def __init__(self, root):
@@ -44,6 +52,7 @@ class AppRepasse:
         self.root.geometry("900x620")
         self.root.minsize(900, 620)
         self.root.resizable(False, False)
+        self.root.configure(bg=MAIN_BG)
 
         self.driver = None
         self.wait = None
@@ -74,19 +83,46 @@ class AppRepasse:
         self.caminho_relatorio_parcial = None
         self.tentativas_do_contrato_atual = 0
 
+        self.configurar_estilo()
         self.criar_interface()
         self.validar_abertura()
 
+    def configurar_estilo(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("App.TFrame", background=MAIN_BG)
+        style.configure("TLabelframe", background=CARD_BG, borderwidth=1, relief="solid")
+        style.configure("TLabelframe.Label", background=CARD_BG, foreground=PRIMARY_TEXT, font=("Segoe UI", 10, "bold"))
+        style.configure("TLabel", background=CARD_BG, foreground="#303030", font=("Segoe UI", 10))
+        style.configure("Primary.TButton", background=BUTTON_BG, foreground="#ffffff", padding=(14, 8), font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.map("Primary.TButton", background=[("active", BUTTON_ACTIVE_BG), ("pressed", BUTTON_ACTIVE_BG)])
+        style.configure("Secondary.TButton", background="#ffffff", foreground=PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
+        style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", PRIMARY_TEXT)])
+
     # ====================== INTERFACE GRÁFICA ======================
     def criar_interface(self):
-        frame = ttk.Frame(self.root, padding=10)
+        frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
         frame.pack(fill="both", expand=True)
+
+        header = tk.Frame(frame, bg=MAIN_BG)
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(header, text="Repasse FOCO", bg=MAIN_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 22, "bold")).pack()
+        tk.Label(
+            header,
+            text="Processamento de repasses com validação, progresso em tempo real e relatório final.",
+            bg=MAIN_BG,
+            fg=MUTED_TEXT,
+            font=("Segoe UI", 10)
+        ).pack(pady=(4, 0))
 
         frame_planilha = ttk.LabelFrame(frame, text="Planilha de Repasses", padding=8)
         frame_planilha.pack(fill="x", pady=4)
 
         ttk.Entry(frame_planilha, textvariable=self.caminho_planilha, width=86).grid(row=0, column=0, padx=5, pady=4, sticky="ew")
-        ttk.Button(frame_planilha, text="Selecionar", command=self.selecionar_planilha).grid(row=0, column=1, padx=5, pady=4)
+        ttk.Button(frame_planilha, text="Selecionar", command=self.selecionar_planilha, style="Secondary.TButton").grid(row=0, column=1, padx=5, pady=4)
 
         ttk.Label(frame_planilha, text="Aba:").grid(row=1, column=0, sticky="w", padx=5, pady=4)
         self.combo_abas = ttk.Combobox(frame_planilha, textvariable=self.aba_selecionada, state="readonly", width=81)
@@ -123,9 +159,9 @@ class AppRepasse:
         ttk.Button(frame_config, text="Hoje", command=self.colocar_data_hoje).grid(row=0, column=2, padx=5, pady=4)
         ttk.Checkbutton(frame_config, text="Executar em modo invisível", variable=self.modo_invisivel).grid(row=0, column=3, padx=20, pady=4, sticky="w")
 
-        self.btn_iniciar = ttk.Button(frame_config, text="🚀 Iniciar Processamento", command=self.iniciar_processamento_wrapper)
+        self.btn_iniciar = ttk.Button(frame_config, text="🚀 Iniciar Processamento", command=self.iniciar_processamento_wrapper, style="Primary.TButton")
         self.btn_iniciar.grid(row=0, column=4, padx=20, pady=4)
-        ttk.Button(frame_config, text="Limpar Log", command=self.limpar_log).grid(row=0, column=5, padx=5, pady=4)
+        ttk.Button(frame_config, text="Limpar Log", command=self.limpar_log, style="Secondary.TButton").grid(row=0, column=5, padx=5, pady=4)
 
         frame_progresso = ttk.LabelFrame(frame, text="Progresso", padding=8)
         frame_progresso.pack(fill="x", pady=4)

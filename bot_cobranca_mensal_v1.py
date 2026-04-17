@@ -34,6 +34,14 @@ class ExecucaoInterrompida(Exception):
 
 
 class RoboCobrancaMensalApp:
+    MAIN_BG = "#f6f4f1"
+    CARD_BG = "#ffffff"
+    PRIMARY_TEXT = "#d81919"
+    MUTED_TEXT = "#5c5c5c"
+    BUTTON_BG = "#ef1a14"
+    BUTTON_ACTIVE_BG = "#c91410"
+    SUCCESS_TEXT = "#187a2f"
+
     URL_BASE = "https://coral.aluguefoco.com.br/"
     URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
     URL_WHATSAPP_WEB = "https://web.whatsapp.com/"
@@ -110,6 +118,7 @@ class RoboCobrancaMensalApp:
         self.root.title("Robô de Cobrança Mensal - Desenvolvido por Diogo Medeiros © 2026")
         self.root.geometry("980x680")
         self.root.minsize(880, 620)
+        self.root.configure(bg=self.MAIN_BG)
 
         self.planilha_path = ""
         self.report_path = None
@@ -140,8 +149,32 @@ class RoboCobrancaMensalApp:
         self.whatsapp_parar_solicitado = False
         self.whatsapp_item_em_andamento = ""
 
+        self.configurar_estilo()
         self.criar_interface()
         self.atualizar_logs_periodicamente()
+
+    def configurar_estilo(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("App.TFrame", background=self.MAIN_BG)
+        style.configure("Card.TFrame", background=self.CARD_BG)
+        style.configure("TLabelframe", background=self.CARD_BG, borderwidth=1, relief="solid")
+        style.configure("TLabelframe.Label", background=self.CARD_BG, foreground=self.PRIMARY_TEXT, font=("Segoe UI", 10, "bold"))
+        style.configure("TLabel", background=self.CARD_BG, foreground="#303030", font=("Segoe UI", 10))
+        style.configure("Muted.TLabel", background=self.MAIN_BG, foreground=self.MUTED_TEXT, font=("Segoe UI", 10))
+        style.configure("Status.TLabel", background=self.CARD_BG, foreground=self.SUCCESS_TEXT, font=("Segoe UI", 10, "bold"))
+        style.configure("TEntry", padding=6)
+        style.configure("TCombobox", padding=4)
+        style.configure("TCheckbutton", background=self.CARD_BG, font=("Segoe UI", 10))
+        style.configure("Primary.TButton", background=self.BUTTON_BG, foreground="#ffffff", padding=(14, 8), font=("Segoe UI", 10, "bold"), borderwidth=0)
+        style.map("Primary.TButton", background=[("active", self.BUTTON_ACTIVE_BG), ("pressed", self.BUTTON_ACTIVE_BG)])
+        style.configure("Secondary.TButton", background="#ffffff", foreground=self.PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
+        style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", self.PRIMARY_TEXT)])
+        style.configure("TNotebook", background=self.MAIN_BG, borderwidth=0)
+        style.configure("TNotebook.Tab", padding=(18, 8), font=("Segoe UI", 10, "bold"))
 
     # =========================
     # VALIDAÇÃO REMOTA + PING
@@ -238,8 +271,25 @@ class RoboCobrancaMensalApp:
     # INTERFACE
     # =========================
     def criar_interface(self):
-        main_frame = ttk.Frame(self.root, padding=10)
+        main_frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
         main_frame.pack(fill="both", expand=True)
+
+        header = tk.Frame(main_frame, bg=self.MAIN_BG)
+        header.pack(fill="x", pady=(0, 10))
+        tk.Label(
+            header,
+            text="Cobrança FOCO",
+            bg=self.MAIN_BG,
+            fg=self.PRIMARY_TEXT,
+            font=("Segoe UI", 22, "bold")
+        ).pack()
+        tk.Label(
+            header,
+            text="Cobrança, link, e-mail e WhatsApp em um único fluxo operacional.",
+            bg=self.MAIN_BG,
+            fg=self.MUTED_TEXT,
+            font=("Segoe UI", 10)
+        ).pack(pady=(4, 0))
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill="both", expand=True)
 
@@ -297,7 +347,8 @@ class RoboCobrancaMensalApp:
         self.btn_planilha = ttk.Button(
             frame_planilha,
             text="Selecionar Planilha Excel",
-            command=self.selecionar_planilha
+            command=self.selecionar_planilha,
+            style="Secondary.TButton"
         )
         self.btn_planilha.pack(pady=(2, 5))
 
@@ -330,13 +381,13 @@ class RoboCobrancaMensalApp:
         frame_botao = ttk.Frame(lateral_execucao)
         frame_botao.pack(fill="x", pady=(8, 0))
 
-        self.btn_iniciar = ttk.Button(frame_botao, text="INICIAR ROBÔ", command=self.iniciar_robo)
+        self.btn_iniciar = ttk.Button(frame_botao, text="INICIAR ROBÔ", command=self.iniciar_robo, style="Primary.TButton")
         self.btn_iniciar.pack(fill="x", pady=(0, 4))
 
-        self.btn_pausar = ttk.Button(frame_botao, text="Pausar", command=self.alternar_pausa, state="disabled")
+        self.btn_pausar = ttk.Button(frame_botao, text="Pausar", command=self.alternar_pausa, state="disabled", style="Secondary.TButton")
         self.btn_pausar.pack(fill="x", pady=4)
 
-        self.btn_parar = ttk.Button(frame_botao, text="Parar", command=self.solicitar_parada, state="disabled")
+        self.btn_parar = ttk.Button(frame_botao, text="Parar", command=self.solicitar_parada, state="disabled", style="Secondary.TButton")
         self.btn_parar.pack(fill="x", pady=(4, 0))
 
         frame_logs = ttk.LabelFrame(aba_cobranca, text="Logs em Tempo Real", padding=8)
@@ -364,7 +415,8 @@ class RoboCobrancaMensalApp:
         self.btn_relatorio_whatsapp = ttk.Button(
             frame_relatorio_whatsapp,
             text="Selecionar Relatório da Cobrança",
-            command=self.selecionar_relatorio_whatsapp
+            command=self.selecionar_relatorio_whatsapp,
+            style="Secondary.TButton"
         )
         self.btn_relatorio_whatsapp.pack(pady=5)
 
@@ -397,7 +449,8 @@ class RoboCobrancaMensalApp:
         self.btn_iniciar_whatsapp = ttk.Button(
             frame_botoes_whatsapp,
             text="INICIAR WHATSAPP",
-            command=self.iniciar_robo_whatsapp
+            command=self.iniciar_robo_whatsapp,
+            style="Primary.TButton"
         )
         self.btn_iniciar_whatsapp.pack(side="left", padx=5)
 
@@ -405,7 +458,8 @@ class RoboCobrancaMensalApp:
             frame_botoes_whatsapp,
             text="Pausar",
             command=self.alternar_pausa_whatsapp,
-            state="disabled"
+            state="disabled",
+            style="Secondary.TButton"
         )
         self.btn_pausar_whatsapp.pack(side="left", padx=5)
 
@@ -413,7 +467,8 @@ class RoboCobrancaMensalApp:
             frame_botoes_whatsapp,
             text="Parar",
             command=self.solicitar_parada_whatsapp,
-            state="disabled"
+            state="disabled",
+            style="Secondary.TButton"
         )
         self.btn_parar_whatsapp.pack(side="left", padx=5)
 
