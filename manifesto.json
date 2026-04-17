@@ -13,6 +13,6 @@
   "contratos": {
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
-    "versao": "1.0.3"
+    "versao": "1.0.4"
   }
 }
