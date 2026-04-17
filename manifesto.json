@@ -3,16 +3,16 @@
   "cobranca": {
     "arquivo": "bot_cobranca_mensal_v1.py",
     "classe": "RoboCobrancaMensalApp",
-    "versao": "1.0.4"
+    "versao": "1.0.6"
   },
   "repasse": {
     "arquivo": "robo_repasse_v6.py",
     "classe": "AppRepasse",
-    "versao": "1.0.5"
+    "versao": "1.0.6"
   },
   "contratos": {
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
-    "versao": "1.0.4"
+    "versao": "1.0.6"
   }
 }
