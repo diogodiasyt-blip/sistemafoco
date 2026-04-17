@@ -1,12 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
-import customtkinter as ctk
 import requests
 import getpass
 from datetime import datetime
 import pandas as pd
 import os
-import sys
 import threading
 import time
 from pathlib import Path
@@ -38,38 +36,14 @@ PAUSA_CURTA = 1.0
 PAUSA_MEDIA = 2.0
 MAX_TENTATIVAS_POR_CONTRATO = 2
 
-MAIN_BG = "#f6f4f1"
-CARD_BG = "#ffffff"
-PRIMARY_TEXT = "#d81919"
-MUTED_TEXT = "#5c5c5c"
-BUTTON_BG = "#ef1a14"
-BUTTON_ACTIVE_BG = "#c91410"
-SUCCESS_TEXT = "#187a2f"
-
-
-def localizar_logo():
-    candidatos = []
-    if getattr(sys, "_MEIPASS", None):
-        candidatos.append(os.path.join(sys._MEIPASS, "assets", "logo.png"))
-    base_atual = os.path.dirname(os.path.abspath(__file__))
-    candidatos.append(os.path.join(os.path.dirname(base_atual), "assets", "logo.png"))
-    candidatos.append(os.path.join(os.getcwd(), "DESENVOLVIMENTO", "assets", "logo.png"))
-    candidatos.append(os.path.join(os.getcwd(), "assets", "logo.png"))
-    for caminho in candidatos:
-        if os.path.exists(caminho):
-            return caminho
-    return None
-
 
 class AppRepasse:
     def __init__(self, root):
-        ctk.set_appearance_mode("light")
         self.root = root
         self.root.title("🤖 Robô de Repasse de Recebimentos v6 - Criado por Diogo Medeiros")
-        self.root.geometry("960x700")
-        self.root.minsize(900, 660)
-        self.root.resizable(True, True)
-        self.root.configure(bg=MAIN_BG)
+        self.root.geometry("900x620")
+        self.root.minsize(900, 620)
+        self.root.resizable(False, False)
 
         self.driver = None
         self.wait = None
@@ -95,93 +69,24 @@ class AppRepasse:
         self.contratos_com_erro = []
         self.contratos_ignorados = []
         self.caminho_relatorio_final = None
-        self.logo_image = None
 
         self.indice_inicio = 0
         self.caminho_relatorio_parcial = None
         self.tentativas_do_contrato_atual = 0
 
-        self.configurar_estilo()
         self.criar_interface()
         self.validar_abertura()
 
-    def configurar_estilo(self):
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-        style.configure("App.TFrame", background=MAIN_BG)
-        style.configure("TLabelframe", background=CARD_BG, borderwidth=1, relief="solid")
-        style.configure("TLabelframe.Label", background=CARD_BG, foreground=PRIMARY_TEXT, font=("Segoe UI", 10, "bold"))
-        style.configure("TLabel", background=CARD_BG, foreground="#303030", font=("Segoe UI", 10))
-        style.configure("Primary.TButton", background=BUTTON_BG, foreground="#ffffff", padding=(14, 8), font=("Segoe UI", 10, "bold"), borderwidth=0)
-        style.map("Primary.TButton", background=[("active", BUTTON_ACTIVE_BG), ("pressed", BUTTON_ACTIVE_BG)])
-        style.configure("Secondary.TButton", background="#ffffff", foreground=PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
-        style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", PRIMARY_TEXT)])
-        style.configure("Accent.Horizontal.TProgressbar", troughcolor="#f3e6e3", background=BUTTON_BG, bordercolor="#f3e6e3", lightcolor=BUTTON_BG, darkcolor=BUTTON_BG)
-
-    def carregar_logo(self, reducao=2):
-        caminho_logo = localizar_logo()
-        if not caminho_logo:
-            return None
-        try:
-            logo = tk.PhotoImage(file=caminho_logo)
-            if reducao > 1:
-                logo = logo.subsample(reducao, reducao)
-            self.logo_image = logo
-            return logo
-        except Exception:
-            return None
-
     # ====================== INTERFACE GRÁFICA ======================
     def criar_interface(self):
-        outer_frame = ttk.Frame(self.root, style="App.TFrame")
-        outer_frame.pack(fill="both", expand=True)
-
-        canvas = tk.Canvas(outer_frame, bg=MAIN_BG, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        frame = ttk.Frame(canvas, padding=12, style="App.TFrame")
-        canvas_window = canvas.create_window((0, 0), window=frame, anchor="nw")
-
-        def ajustar_rolagem(_event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def ajustar_largura(event):
-            canvas.itemconfigure(canvas_window, width=event.width)
-
-        frame.bind("<Configure>", ajustar_rolagem)
-        canvas.bind("<Configure>", ajustar_largura)
-
-        hero = tk.Frame(frame, bg=CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
-        hero.pack(fill="x", pady=(0, 12))
-        hero_inner = tk.Frame(hero, bg=CARD_BG)
-        hero_inner.pack(fill="x", padx=20, pady=18)
-        logo = self.carregar_logo(reducao=2)
-        if logo:
-            tk.Label(hero_inner, image=logo, bg=CARD_BG).pack(side="left", padx=(0, 16))
-        header_texto = tk.Frame(hero_inner, bg=CARD_BG)
-        header_texto.pack(side="left", fill="x", expand=True)
-        tk.Label(header_texto, text="Repasse FOCO", bg=CARD_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 21, "bold")).pack(anchor="w")
-        tk.Label(
-            header_texto,
-            text="Processamento de repasses com validação, progresso em tempo real e relatório final.",
-            bg=CARD_BG,
-            fg=MUTED_TEXT,
-            font=("Segoe UI", 10)
-        ).pack(anchor="w", pady=(4, 0))
-        tk.Label(header_texto, text="OPERACAO DE REPASSE", bg=CARD_BG, fg="#a65f56", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 0))
+        frame = ttk.Frame(self.root, padding=10)
+        frame.pack(fill="both", expand=True)
 
         frame_planilha = ttk.LabelFrame(frame, text="Planilha de Repasses", padding=8)
         frame_planilha.pack(fill="x", pady=4)
 
         ttk.Entry(frame_planilha, textvariable=self.caminho_planilha, width=86).grid(row=0, column=0, padx=5, pady=4, sticky="ew")
-        ttk.Button(frame_planilha, text="Selecionar", command=self.selecionar_planilha, style="Secondary.TButton").grid(row=0, column=1, padx=5, pady=4)
+        ttk.Button(frame_planilha, text="Selecionar", command=self.selecionar_planilha).grid(row=0, column=1, padx=5, pady=4)
 
         ttk.Label(frame_planilha, text="Aba:").grid(row=1, column=0, sticky="w", padx=5, pady=4)
         self.combo_abas = ttk.Combobox(frame_planilha, textvariable=self.aba_selecionada, state="readonly", width=81)
@@ -218,22 +123,21 @@ class AppRepasse:
         ttk.Button(frame_config, text="Hoje", command=self.colocar_data_hoje).grid(row=0, column=2, padx=5, pady=4)
         ttk.Checkbutton(frame_config, text="Executar em modo invisível", variable=self.modo_invisivel).grid(row=0, column=3, padx=20, pady=4, sticky="w")
 
-        self.btn_iniciar = ttk.Button(frame_config, text="🚀 Iniciar Processamento", command=self.iniciar_processamento_wrapper, style="Primary.TButton")
+        self.btn_iniciar = ttk.Button(frame_config, text="🚀 Iniciar Processamento", command=self.iniciar_processamento_wrapper)
         self.btn_iniciar.grid(row=0, column=4, padx=20, pady=4)
-        ttk.Button(frame_config, text="Limpar Log", command=self.limpar_log, style="Secondary.TButton").grid(row=0, column=5, padx=5, pady=4)
+        ttk.Button(frame_config, text="Limpar Log", command=self.limpar_log).grid(row=0, column=5, padx=5, pady=4)
 
         frame_progresso = ttk.LabelFrame(frame, text="Progresso", padding=8)
         frame_progresso.pack(fill="x", pady=4)
-        self.progressbar = ttk.Progressbar(frame_progresso, variable=self.progresso, maximum=100, length=840, style="Accent.Horizontal.TProgressbar")
+        self.progressbar = ttk.Progressbar(frame_progresso, variable=self.progresso, maximum=100, length=840)
         self.progressbar.pack(padx=5, pady=4)
         self.label_status = ttk.Label(frame_progresso, text="0/0", font=("Arial", 9))
         self.label_status.pack()
 
         frame_log = ttk.LabelFrame(frame, text="Log do Processamento", padding=8)
         frame_log.pack(fill="both", expand=True, pady=4)
-        self.log_text = scrolledtext.ScrolledText(frame_log, height=14, state="disabled", font=("Consolas", 9))
+        self.log_text = scrolledtext.ScrolledText(frame_log, height=18, state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
-        self.log_text.configure(bg="#fffaf9", fg="#303030", insertbackground=PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
     # ====================== VALIDAÇÃO E CONTROLE ======================
     def validar_abertura(self):
