@@ -301,8 +301,27 @@ class RoboCobrancaMensalApp:
     # INTERFACE
     # =========================
     def criar_interface(self):
-        main_frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
-        main_frame.pack(fill="both", expand=True)
+        outer_frame = ttk.Frame(self.root, style="App.TFrame")
+        outer_frame.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(outer_frame, bg=self.MAIN_BG, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        main_frame = ttk.Frame(canvas, padding=12, style="App.TFrame")
+        canvas_window = canvas.create_window((0, 0), window=main_frame, anchor="nw")
+
+        def ajustar_rolagem(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def ajustar_largura(event):
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        main_frame.bind("<Configure>", ajustar_rolagem)
+        canvas.bind("<Configure>", ajustar_largura)
 
         hero = tk.Frame(main_frame, bg=self.CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
         hero.pack(fill="x", pady=(0, 12))
@@ -439,7 +458,7 @@ class RoboCobrancaMensalApp:
         frame_logs = ttk.LabelFrame(aba_cobranca, text="Logs em Tempo Real", padding=8)
         frame_logs.pack(fill="both", expand=True, pady=(5, 0))
 
-        self.txt_logs = scrolledtext.ScrolledText(frame_logs, height=20, wrap="word", state="disabled", font=("Consolas", 9))
+        self.txt_logs = scrolledtext.ScrolledText(frame_logs, height=14, wrap="word", state="disabled", font=("Consolas", 9))
         self.txt_logs.pack(fill="both", expand=True)
         self.txt_logs.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
@@ -522,7 +541,7 @@ class RoboCobrancaMensalApp:
         frame_logs_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Logs do WhatsApp", padding=10)
         frame_logs_whatsapp.pack(fill="both", expand=True, pady=5)
 
-        self.txt_logs_whatsapp = scrolledtext.ScrolledText(frame_logs_whatsapp, height=18, wrap="word", state="disabled", font=("Consolas", 9))
+        self.txt_logs_whatsapp = scrolledtext.ScrolledText(frame_logs_whatsapp, height=13, wrap="word", state="disabled", font=("Consolas", 9))
         self.txt_logs_whatsapp.pack(fill="both", expand=True)
         self.txt_logs_whatsapp.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 

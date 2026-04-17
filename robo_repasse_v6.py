@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext, messagebox
+import customtkinter as ctk
 import requests
 import getpass
 from datetime import datetime
@@ -62,11 +63,12 @@ def localizar_logo():
 
 class AppRepasse:
     def __init__(self, root):
+        ctk.set_appearance_mode("light")
         self.root = root
         self.root.title("🤖 Robô de Repasse de Recebimentos v6 - Criado por Diogo Medeiros")
-        self.root.geometry("900x620")
-        self.root.minsize(900, 620)
-        self.root.resizable(False, False)
+        self.root.geometry("960x700")
+        self.root.minsize(900, 660)
+        self.root.resizable(True, True)
         self.root.configure(bg=MAIN_BG)
 
         self.driver = None
@@ -134,8 +136,27 @@ class AppRepasse:
 
     # ====================== INTERFACE GRÁFICA ======================
     def criar_interface(self):
-        frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
-        frame.pack(fill="both", expand=True)
+        outer_frame = ttk.Frame(self.root, style="App.TFrame")
+        outer_frame.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(outer_frame, bg=MAIN_BG, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        frame = ttk.Frame(canvas, padding=12, style="App.TFrame")
+        canvas_window = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+        def ajustar_rolagem(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def ajustar_largura(event):
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        frame.bind("<Configure>", ajustar_rolagem)
+        canvas.bind("<Configure>", ajustar_largura)
 
         hero = tk.Frame(frame, bg=CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
         hero.pack(fill="x", pady=(0, 12))
@@ -210,7 +231,7 @@ class AppRepasse:
 
         frame_log = ttk.LabelFrame(frame, text="Log do Processamento", padding=8)
         frame_log.pack(fill="both", expand=True, pady=4)
-        self.log_text = scrolledtext.ScrolledText(frame_log, height=18, state="disabled", font=("Consolas", 9))
+        self.log_text = scrolledtext.ScrolledText(frame_log, height=14, state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
         self.log_text.configure(bg="#fffaf9", fg="#303030", insertbackground=PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
