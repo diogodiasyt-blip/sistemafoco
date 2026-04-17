@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import os
 import re
+import sys
 import requests
 import getpass
 import unicodedata
@@ -31,6 +32,20 @@ class RevisaoManualObrigatoria(Exception):
 
 class ExecucaoInterrompida(Exception):
     pass
+
+
+def localizar_logo():
+    candidatos = []
+    if getattr(sys, "_MEIPASS", None):
+        candidatos.append(os.path.join(sys._MEIPASS, "assets", "logo.png"))
+    base_atual = os.path.dirname(os.path.abspath(__file__))
+    candidatos.append(os.path.join(os.path.dirname(base_atual), "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "DESENVOLVIMENTO", "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "assets", "logo.png"))
+    for caminho in candidatos:
+        if os.path.exists(caminho):
+            return caminho
+    return None
 
 
 class RoboCobrancaMensalApp:
@@ -116,8 +131,8 @@ class RoboCobrancaMensalApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Robô de Cobrança Mensal - Desenvolvido por Diogo Medeiros © 2026")
-        self.root.geometry("980x680")
-        self.root.minsize(880, 620)
+        self.root.geometry("980x760")
+        self.root.minsize(900, 700)
         self.root.configure(bg=self.MAIN_BG)
 
         self.planilha_path = ""
@@ -148,6 +163,7 @@ class RoboCobrancaMensalApp:
         self.whatsapp_pausado = False
         self.whatsapp_parar_solicitado = False
         self.whatsapp_item_em_andamento = ""
+        self.logo_image = None
 
         self.configurar_estilo()
         self.criar_interface()
@@ -175,6 +191,20 @@ class RoboCobrancaMensalApp:
         style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", self.PRIMARY_TEXT)])
         style.configure("TNotebook", background=self.MAIN_BG, borderwidth=0)
         style.configure("TNotebook.Tab", padding=(18, 8), font=("Segoe UI", 10, "bold"))
+        style.configure("Accent.Horizontal.TProgressbar", troughcolor="#f3e6e3", background=self.BUTTON_BG, bordercolor="#f3e6e3", lightcolor=self.BUTTON_BG, darkcolor=self.BUTTON_BG)
+
+    def carregar_logo(self, reducao=2):
+        caminho_logo = localizar_logo()
+        if not caminho_logo:
+            return None
+        try:
+            logo = tk.PhotoImage(file=caminho_logo)
+            if reducao > 1:
+                logo = logo.subsample(reducao, reducao)
+            self.logo_image = logo
+            return logo
+        except Exception:
+            return None
 
     # =========================
     # VALIDAÇÃO REMOTA + PING
@@ -274,22 +304,38 @@ class RoboCobrancaMensalApp:
         main_frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
         main_frame.pack(fill="both", expand=True)
 
-        header = tk.Frame(main_frame, bg=self.MAIN_BG)
-        header.pack(fill="x", pady=(0, 10))
+        hero = tk.Frame(main_frame, bg=self.CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
+        hero.pack(fill="x", pady=(0, 12))
+        hero_inner = tk.Frame(hero, bg=self.CARD_BG)
+        hero_inner.pack(fill="x", padx=20, pady=18)
+
+        logo = self.carregar_logo(reducao=2)
+        if logo:
+            tk.Label(hero_inner, image=logo, bg=self.CARD_BG).pack(side="left", padx=(0, 16))
+
+        header_texto = tk.Frame(hero_inner, bg=self.CARD_BG)
+        header_texto.pack(side="left", fill="x", expand=True)
         tk.Label(
-            header,
+            header_texto,
             text="Cobrança FOCO",
-            bg=self.MAIN_BG,
+            bg=self.CARD_BG,
             fg=self.PRIMARY_TEXT,
-            font=("Segoe UI", 22, "bold")
-        ).pack()
+            font=("Segoe UI", 21, "bold")
+        ).pack(anchor="w")
         tk.Label(
-            header,
+            header_texto,
             text="Cobrança, link, e-mail e WhatsApp em um único fluxo operacional.",
-            bg=self.MAIN_BG,
+            bg=self.CARD_BG,
             fg=self.MUTED_TEXT,
             font=("Segoe UI", 10)
-        ).pack(pady=(4, 0))
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            header_texto,
+            text="OPERACAO FINANCEIRA",
+            bg=self.CARD_BG,
+            fg="#a65f56",
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", pady=(8, 0))
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill="both", expand=True)
 
@@ -372,7 +418,7 @@ class RoboCobrancaMensalApp:
         frame_progresso = ttk.Frame(lateral_execucao)
         frame_progresso.pack(fill="x")
 
-        self.progress = ttk.Progressbar(frame_progresso, orient="horizontal", mode="determinate")
+        self.progress = ttk.Progressbar(frame_progresso, orient="horizontal", mode="determinate", style="Accent.Horizontal.TProgressbar")
         self.progress.pack(fill="x", padx=5, pady=5)
 
         self.label_progresso = ttk.Label(frame_progresso, text="0/0 - Aguardando início...")
@@ -393,8 +439,9 @@ class RoboCobrancaMensalApp:
         frame_logs = ttk.LabelFrame(aba_cobranca, text="Logs em Tempo Real", padding=8)
         frame_logs.pack(fill="both", expand=True, pady=(5, 0))
 
-        self.txt_logs = scrolledtext.ScrolledText(frame_logs, height=20, wrap="word", state="disabled")
+        self.txt_logs = scrolledtext.ScrolledText(frame_logs, height=20, wrap="word", state="disabled", font=("Consolas", 9))
         self.txt_logs.pack(fill="both", expand=True)
+        self.txt_logs.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
         frame_info_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Autenticação do WhatsApp Web", padding=10)
         frame_info_whatsapp.pack(fill="x", pady=5)
@@ -437,7 +484,7 @@ class RoboCobrancaMensalApp:
         frame_progresso_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Progresso do WhatsApp", padding=10)
         frame_progresso_whatsapp.pack(fill="x", pady=5)
 
-        self.progress_whatsapp = ttk.Progressbar(frame_progresso_whatsapp, orient="horizontal", mode="determinate")
+        self.progress_whatsapp = ttk.Progressbar(frame_progresso_whatsapp, orient="horizontal", mode="determinate", style="Accent.Horizontal.TProgressbar")
         self.progress_whatsapp.pack(fill="x", padx=5, pady=5)
 
         self.label_progresso_whatsapp = ttk.Label(frame_progresso_whatsapp, text="0/0 - Aguardando início...")
@@ -475,8 +522,9 @@ class RoboCobrancaMensalApp:
         frame_logs_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Logs do WhatsApp", padding=10)
         frame_logs_whatsapp.pack(fill="both", expand=True, pady=5)
 
-        self.txt_logs_whatsapp = scrolledtext.ScrolledText(frame_logs_whatsapp, height=18, wrap="word", state="disabled")
+        self.txt_logs_whatsapp = scrolledtext.ScrolledText(frame_logs_whatsapp, height=18, wrap="word", state="disabled", font=("Consolas", 9))
         self.txt_logs_whatsapp.pack(fill="both", expand=True)
+        self.txt_logs_whatsapp.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
     # =========================
     # LOGS / PROGRESSO

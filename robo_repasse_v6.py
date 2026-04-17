@@ -5,6 +5,7 @@ import getpass
 from datetime import datetime
 import pandas as pd
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -45,6 +46,20 @@ BUTTON_ACTIVE_BG = "#c91410"
 SUCCESS_TEXT = "#187a2f"
 
 
+def localizar_logo():
+    candidatos = []
+    if getattr(sys, "_MEIPASS", None):
+        candidatos.append(os.path.join(sys._MEIPASS, "assets", "logo.png"))
+    base_atual = os.path.dirname(os.path.abspath(__file__))
+    candidatos.append(os.path.join(os.path.dirname(base_atual), "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "DESENVOLVIMENTO", "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "assets", "logo.png"))
+    for caminho in candidatos:
+        if os.path.exists(caminho):
+            return caminho
+    return None
+
+
 class AppRepasse:
     def __init__(self, root):
         self.root = root
@@ -78,6 +93,7 @@ class AppRepasse:
         self.contratos_com_erro = []
         self.contratos_ignorados = []
         self.caminho_relatorio_final = None
+        self.logo_image = None
 
         self.indice_inicio = 0
         self.caminho_relatorio_parcial = None
@@ -101,22 +117,44 @@ class AppRepasse:
         style.map("Primary.TButton", background=[("active", BUTTON_ACTIVE_BG), ("pressed", BUTTON_ACTIVE_BG)])
         style.configure("Secondary.TButton", background="#ffffff", foreground=PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
         style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", PRIMARY_TEXT)])
+        style.configure("Accent.Horizontal.TProgressbar", troughcolor="#f3e6e3", background=BUTTON_BG, bordercolor="#f3e6e3", lightcolor=BUTTON_BG, darkcolor=BUTTON_BG)
+
+    def carregar_logo(self, reducao=2):
+        caminho_logo = localizar_logo()
+        if not caminho_logo:
+            return None
+        try:
+            logo = tk.PhotoImage(file=caminho_logo)
+            if reducao > 1:
+                logo = logo.subsample(reducao, reducao)
+            self.logo_image = logo
+            return logo
+        except Exception:
+            return None
 
     # ====================== INTERFACE GRÁFICA ======================
     def criar_interface(self):
         frame = ttk.Frame(self.root, padding=12, style="App.TFrame")
         frame.pack(fill="both", expand=True)
 
-        header = tk.Frame(frame, bg=MAIN_BG)
-        header.pack(fill="x", pady=(0, 10))
-        tk.Label(header, text="Repasse FOCO", bg=MAIN_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 22, "bold")).pack()
+        hero = tk.Frame(frame, bg=CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
+        hero.pack(fill="x", pady=(0, 12))
+        hero_inner = tk.Frame(hero, bg=CARD_BG)
+        hero_inner.pack(fill="x", padx=20, pady=18)
+        logo = self.carregar_logo(reducao=2)
+        if logo:
+            tk.Label(hero_inner, image=logo, bg=CARD_BG).pack(side="left", padx=(0, 16))
+        header_texto = tk.Frame(hero_inner, bg=CARD_BG)
+        header_texto.pack(side="left", fill="x", expand=True)
+        tk.Label(header_texto, text="Repasse FOCO", bg=CARD_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 21, "bold")).pack(anchor="w")
         tk.Label(
-            header,
+            header_texto,
             text="Processamento de repasses com validação, progresso em tempo real e relatório final.",
-            bg=MAIN_BG,
+            bg=CARD_BG,
             fg=MUTED_TEXT,
             font=("Segoe UI", 10)
-        ).pack(pady=(4, 0))
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(header_texto, text="OPERACAO DE REPASSE", bg=CARD_BG, fg="#a65f56", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 0))
 
         frame_planilha = ttk.LabelFrame(frame, text="Planilha de Repasses", padding=8)
         frame_planilha.pack(fill="x", pady=4)
@@ -165,7 +203,7 @@ class AppRepasse:
 
         frame_progresso = ttk.LabelFrame(frame, text="Progresso", padding=8)
         frame_progresso.pack(fill="x", pady=4)
-        self.progressbar = ttk.Progressbar(frame_progresso, variable=self.progresso, maximum=100, length=840)
+        self.progressbar = ttk.Progressbar(frame_progresso, variable=self.progresso, maximum=100, length=840, style="Accent.Horizontal.TProgressbar")
         self.progressbar.pack(padx=5, pady=4)
         self.label_status = ttk.Label(frame_progresso, text="0/0", font=("Arial", 9))
         self.label_status.pack()
@@ -174,6 +212,7 @@ class AppRepasse:
         frame_log.pack(fill="both", expand=True, pady=4)
         self.log_text = scrolledtext.ScrolledText(frame_log, height=18, state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
+        self.log_text.configure(bg="#fffaf9", fg="#303030", insertbackground=PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
     # ====================== VALIDAÇÃO E CONTROLE ======================
     def validar_abertura(self):

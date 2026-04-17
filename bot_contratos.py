@@ -31,6 +31,20 @@ MUTED_TEXT = "#5c5c5c"
 BUTTON_BG = "#ef1a14"
 BUTTON_ACTIVE_BG = "#c91410"
 
+
+def localizar_logo():
+    candidatos = []
+    if getattr(sys, "_MEIPASS", None):
+        candidatos.append(os.path.join(sys._MEIPASS, "assets", "logo.png"))
+    base_atual = os.path.dirname(os.path.abspath(__file__))
+    candidatos.append(os.path.join(os.path.dirname(base_atual), "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "DESENVOLVIMENTO", "assets", "logo.png"))
+    candidatos.append(os.path.join(os.getcwd(), "assets", "logo.png"))
+    for caminho in candidatos:
+        if os.path.exists(caminho):
+            return caminho
+    return None
+
 def get_desktop_path():
     try:
         import winreg
@@ -235,6 +249,7 @@ class RoboContratosApp:
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
         self.progress_var = tk.DoubleVar(value=0)
+        self.logo_image = None
 
         self.configurar_estilo()
         self.create_widgets()
@@ -253,18 +268,40 @@ class RoboContratosApp:
         style.map("Primary.TButton", background=[("active", BUTTON_ACTIVE_BG), ("pressed", BUTTON_ACTIVE_BG)])
         style.configure("Secondary.TButton", background="#ffffff", foreground=PRIMARY_TEXT, padding=(12, 8), font=("Segoe UI", 10, "bold"), borderwidth=1)
         style.map("Secondary.TButton", background=[("active", "#fff3f2")], foreground=[("active", PRIMARY_TEXT)])
+        style.configure("Accent.Horizontal.TProgressbar", troughcolor="#f3e6e3", background=BUTTON_BG, bordercolor="#f3e6e3", lightcolor=BUTTON_BG, darkcolor=BUTTON_BG)
+
+    def carregar_logo(self, reducao=2):
+        caminho_logo = localizar_logo()
+        if not caminho_logo:
+            return None
+        try:
+            logo = tk.PhotoImage(file=caminho_logo)
+            if reducao > 1:
+                logo = logo.subsample(reducao, reducao)
+            self.logo_image = logo
+            return logo
+        except Exception:
+            return None
 
     def create_widgets(self):
-        header = tk.Frame(self.root, bg=MAIN_BG)
-        header.pack(fill="x", padx=12, pady=(12, 6))
-        tk.Label(header, text="Contratos FOCO", bg=MAIN_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 22, "bold")).pack()
+        hero = tk.Frame(self.root, bg=CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
+        hero.pack(fill="x", padx=12, pady=(12, 8))
+        hero_inner = tk.Frame(hero, bg=CARD_BG)
+        hero_inner.pack(fill="x", padx=20, pady=18)
+        logo = self.carregar_logo(reducao=2)
+        if logo:
+            tk.Label(hero_inner, image=logo, bg=CARD_BG).pack(side="left", padx=(0, 16))
+        header_texto = tk.Frame(hero_inner, bg=CARD_BG)
+        header_texto.pack(side="left", fill="x", expand=True)
+        tk.Label(header_texto, text="Contratos FOCO", bg=CARD_BG, fg=PRIMARY_TEXT, font=("Segoe UI", 21, "bold")).pack(anchor="w")
         tk.Label(
-            header,
+            header_texto,
             text="Busca, reenvio e download de contratos com progresso em tempo real.",
-            bg=MAIN_BG,
+            bg=CARD_BG,
             fg=MUTED_TEXT,
             font=("Segoe UI", 10)
-        ).pack(pady=(4, 0))
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(header_texto, text="GESTAO DE CONTRATOS", bg=CARD_BG, fg="#a65f56", font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 0))
 
         # Login
         login_frame = ttk.LabelFrame(self.root, text="🔑 Login do Sistema", padding=10)
@@ -283,15 +320,15 @@ class RoboContratosApp:
         # Planilha e Pasta
         file_frame = ttk.LabelFrame(self.root, text="📁 Planilha e Pasta", padding=10)
         file_frame.pack(fill="x", padx=10, pady=5)
-        ttk.Button(file_frame, text="📊 Selecionar Planilha Excel", command=self.selecionar_planilha).pack(pady=5)
+        ttk.Button(file_frame, text="Selecionar Planilha Excel", command=self.selecionar_planilha, style="Secondary.TButton").pack(pady=5)
         ttk.Label(file_frame, textvariable=self.planilha_var, wraplength=900, foreground="blue").pack(anchor="w")
-        ttk.Button(file_frame, text="📂 Mudar Pasta de Salvamento", command=self.selecionar_pasta).pack(pady=5)
+        ttk.Button(file_frame, text="Mudar Pasta de Salvamento", command=self.selecionar_pasta, style="Secondary.TButton").pack(pady=5)
         ttk.Label(file_frame, textvariable=self.pasta_var, wraplength=900, foreground="blue").pack(anchor="w")
 
         # Progresso
         progress_frame = ttk.LabelFrame(self.root, text="Progresso da Execução", padding=10)
         progress_frame.pack(fill="x", padx=10, pady=5)
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100, style="Accent.Horizontal.TProgressbar")
         self.progress_bar.pack(fill="x", pady=5)
         self.label_progress = ttk.Label(progress_frame, text="0% - Aguardando início...")
         self.label_progress.pack()
@@ -305,6 +342,7 @@ class RoboContratosApp:
         log_frame.pack(fill="both", expand=True, padx=10, pady=5)
         self.log_text = scrolledtext.ScrolledText(log_frame, height=18, state='disabled', font=("Consolas", 10))
         self.log_text.pack(fill="both", expand=True)
+        self.log_text.configure(bg="#fffaf9", fg="#303030", insertbackground=PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
 
         ttk.Button(self.root, text="💾 Salvar Log", command=self.salvar_log, style="Secondary.TButton").pack(pady=5)
 
