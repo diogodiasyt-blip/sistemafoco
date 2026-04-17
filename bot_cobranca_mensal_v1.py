@@ -96,6 +96,7 @@ class RoboCobrancaMensalApp:
     TIMEOUT_LONGO = 60
     TIMEOUT_CURTO = 5
     TIMEOUT_POPUP = 8
+    TIMEOUT_PAGAMENTOS_RAPIDO = 10
 
     MAX_TENTATIVAS_ITEM = 2
     MAX_TENTATIVAS_BUSCA = 2
@@ -125,6 +126,9 @@ class RoboCobrancaMensalApp:
     XPATH_ABA_PAGAMENTOS_RAPIDA = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[1]/div/div/div[2]/div[11]/button"
     XPATH_ABA_PAGAMENTOS_RAPIDA_ICONE = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[1]/div/div/div[2]/div[11]/button/i"
     XPATH_POPUP_SIM = "/html/body/ngb-modal-window/div/div/foco-confirm-modal/div[3]/button[2]"
+    XPATH_ABA_DADOS_COMPLEMENTARES = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[1]/div/div/div[2]/div[7]/button/i"
+    XPATH_TEXTO_DADOS_COMPLEMENTARES = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[4]/foco-rent-agreement-extra-info-form/div/div[1]/div[1]"
+    XPATH_BOTAO_AVANCAR_DADOS_COMPLEMENTARES = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[3]/div/div/div[2]/button[2]"
     XPATH_AVANCAR_1 = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[3]/div/div/div[2]/button"
     XPATH_AVANCAR_2 = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[3]/div/div/div[2]/button[3]"
     XPATH_AVANCAR_3 = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[3]/div/div/div[2]/button[2]"
@@ -184,6 +188,9 @@ class RoboCobrancaMensalApp:
         self.whatsapp_total_aptos = 0
         self.cobrancas_concluidas = 0
         self.links_gerados = 0
+        self.total_cartao_sucesso = 0
+        self.total_email_sucesso = 0
+        self.total_erros_execucao = 0
         self.whatsapp_enviados = 0
         self.pausado = False
         self.parar_solicitado = False
@@ -192,6 +199,7 @@ class RoboCobrancaMensalApp:
         self.whatsapp_parar_solicitado = False
         self.whatsapp_item_em_andamento = ""
         self.logo_image = None
+        self.popup_edicao_tratado = False
 
         self.configurar_estilo()
         self.criar_interface()
@@ -477,6 +485,39 @@ class RoboCobrancaMensalApp:
         self.label_aptos = ctk.CTkLabel(planilha_box, text=f"Contratos aptos para cobranca ({self.var_modalidade.get()}): 0", text_color="#303030", font=("Segoe UI", 14, "bold"), anchor="w", justify="left")
         self.label_aptos.pack(fill="x")
 
+        frame_resumo_execucao = self.criar_secao_card(aba_cobranca, "Resumo da Execucao")
+        frame_resumo_execucao.pack(fill="x", padx=8, pady=(0, 10))
+        resumo_box = ctk.CTkFrame(frame_resumo_execucao, fg_color="transparent")
+        resumo_box.pack(fill="x", padx=18, pady=(0, 18))
+        resumo_box.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self.label_total_cartao = ctk.CTkLabel(
+            resumo_box,
+            text="Cobrados no cartao: 0",
+            text_color=self.SUCCESS_TEXT,
+            font=("Segoe UI", 14, "bold"),
+            anchor="w"
+        )
+        self.label_total_cartao.grid(row=0, column=0, sticky="ew", padx=(0, 12), pady=4)
+
+        self.label_total_email = ctk.CTkLabel(
+            resumo_box,
+            text="Links enviados por e-mail: 0",
+            text_color="#1f5fbf",
+            font=("Segoe UI", 14, "bold"),
+            anchor="w"
+        )
+        self.label_total_email.grid(row=0, column=1, sticky="ew", padx=12, pady=4)
+
+        self.label_total_erros = ctk.CTkLabel(
+            resumo_box,
+            text="Contratos com erro: 0",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 14, "bold"),
+            anchor="w"
+        )
+        self.label_total_erros.grid(row=0, column=2, sticky="ew", padx=(12, 0), pady=4)
+
         lateral_execucao = self.criar_secao_card(meio_cobranca, "Execucao")
         lateral_execucao.pack(side="left", fill="both", padx=(6, 0), pady=(0, 10))
         exec_box = ctk.CTkFrame(lateral_execucao, fg_color="transparent")
@@ -590,6 +631,15 @@ class RoboCobrancaMensalApp:
         self.processar_fila_logs(self.log_queue, self.txt_logs)
         self.processar_fila_logs(self.whatsapp_log_queue, self.txt_logs_whatsapp)
         self.root.after(200, self.atualizar_logs_periodicamente)
+
+    def atualizar_resumo_execucao(self):
+        if hasattr(self, "label_total_cartao"):
+            self.label_total_cartao.configure(text=f"Cobrados no cartao: {self.total_cartao_sucesso}")
+        if hasattr(self, "label_total_email"):
+            self.label_total_email.configure(text=f"Links enviados por e-mail: {self.total_email_sucesso}")
+        if hasattr(self, "label_total_erros"):
+            self.label_total_erros.configure(text=f"Contratos com erro: {self.total_erros_execucao}")
+        self.root.update_idletasks()
 
     def atualizar_progresso(self, atual, total, texto_extra=""):
         percentual = (atual / total) * 100 if total > 0 else 0
@@ -1347,9 +1397,11 @@ class RoboCobrancaMensalApp:
         return True
 
     def abrir_edicao_contrato(self):
-        self.clicar_seguro(By.XPATH, self.XPATH_MAIS_OPCOES, "Mais opções", timeout=self.TIMEOUT_PADRAO)
+        self.clicar_seguro(By.XPATH, self.XPATH_MAIS_OPCOES, "Mais op??es", timeout=self.TIMEOUT_PADRAO)
         self.esperar_visivel(By.XPATH, self.XPATH_EDITAR, timeout=self.TIMEOUT_PADRAO)
         self.clicar_seguro(By.XPATH, self.XPATH_EDITAR, "Editar", timeout=self.TIMEOUT_PADRAO)
+        if self.clicar_popup_sim_se_aparecer(timeout=self.TIMEOUT_POPUP):
+            self.adicionar_log("Popup tratado logo ap?s clicar em Editar.")
         self.validar_tela_edicao(timeout=self.TIMEOUT_PADRAO)
         return True
 
@@ -1396,6 +1448,35 @@ class RoboCobrancaMensalApp:
         except Exception:
             return False
 
+    def clicar_popup_sim_se_aparecer(self, timeout=None):
+        if timeout is None:
+            timeout = self.TIMEOUT_POPUP
+        if not self.popup_sim_apareceu(timeout=timeout):
+            return False
+        self.adicionar_log("Popup SIM detectado. Clicando para liberar a edi??o...")
+        self.clicar_seguro(By.XPATH, self.XPATH_POPUP_SIM, "bot?o Sim do popup", timeout=self.TIMEOUT_PADRAO)
+        self.popup_edicao_tratado = True
+        time.sleep(1)
+        return True
+
+    def esta_na_aba_dados_complementares(self, timeout=None):
+        if timeout is None:
+            timeout = self.TIMEOUT_CURTO
+        try:
+            texto = self.obter_texto(By.XPATH, self.XPATH_TEXTO_DADOS_COMPLEMENTARES, timeout=timeout)
+            return "dados complementares" in texto.strip().lower()
+        except Exception:
+            return False
+
+    def validar_aba_dados_complementares(self, timeout=None):
+        if timeout is None:
+            timeout = self.TIMEOUT_PADRAO
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: self.esta_na_aba_dados_complementares(timeout=self.TIMEOUT_CURTO)
+        )
+        self.adicionar_log("Aba Dados complementares validada com sucesso.")
+        return True
+
     def aguardar_aba_pagamentos_disponivel(self, timeout=None):
         if timeout is None:
             timeout = self.TIMEOUT_LONGO
@@ -1426,33 +1507,45 @@ class RoboCobrancaMensalApp:
         raise Exception(f"A aba Pagamentos não ficou disponível dentro do tempo limite. Última falha: {ultima_falha}")
 
     def tentar_ir_pagamentos_via_rapida(self):
-        self.adicionar_log("Tentando método rápido para ir à aba Pagamentos...")
-        self.aguardar_aba_pagamentos_disponivel(timeout=self.TIMEOUT_LONGO)
+        self.adicionar_log(f"Tentando m?todo r?pido para ir ? aba Pagamentos por at? {self.TIMEOUT_PAGAMENTOS_RAPIDO}s...")
+        self.aguardar_aba_pagamentos_disponivel(timeout=self.TIMEOUT_PAGAMENTOS_RAPIDO)
         self.clicar_seguro(
             By.XPATH,
             self.XPATH_ABA_PAGAMENTOS_RAPIDA,
-            "aba Pagamentos (método rápido)",
+            "aba Pagamentos (m?todo r?pido)",
             timeout=self.TIMEOUT_LONGO
         )
         self.validar_aba_pagamentos_com_retry()
-        self.adicionar_log("Método rápido funcionou. Já estamos em Pagamentos.")
+        self.adicionar_log("M?todo r?pido funcionou. J? estamos em Pagamentos.")
+        return True
+
+    def tentar_ir_pagamentos_via_dados_complementares(self):
+        self.adicionar_log("Tentando rota alternativa via Dados complementares...")
+        self.clicar_seguro(
+            By.XPATH,
+            self.XPATH_ABA_DADOS_COMPLEMENTARES,
+            "aba Dados complementares",
+            timeout=self.TIMEOUT_PADRAO
+        )
+        self.validar_aba_dados_complementares(timeout=self.TIMEOUT_PADRAO)
+        self.clicar_seguro(
+            By.XPATH,
+            self.XPATH_BOTAO_AVANCAR_DADOS_COMPLEMENTARES,
+            "Avan?ar de Dados complementares",
+            timeout=self.TIMEOUT_PADRAO
+        )
+        time.sleep(1)
+        self.validar_aba_pagamentos_com_retry()
+        self.adicionar_log("Rota via Dados complementares funcionou. J? estamos em Pagamentos.")
         return True
 
     def tentar_fluxo_popup_para_pagamentos(self):
-        self.adicionar_log("Popup detectado. Iniciando fluxo alternativo até Pagamentos...")
-        self.clicar_seguro(By.XPATH, self.XPATH_POPUP_SIM, "botão Sim do popup", timeout=self.TIMEOUT_PADRAO)
-        time.sleep(1)
-        self.clicar_seguro(By.XPATH, self.XPATH_AVANCAR_1, "Avançar 1", timeout=self.TIMEOUT_PADRAO)
-        time.sleep(1)
-        self.clicar_seguro(By.XPATH, self.XPATH_AVANCAR_2, "Avançar 2", timeout=self.TIMEOUT_PADRAO)
-        time.sleep(1)
-        self.clicar_seguro(By.XPATH, self.XPATH_AVANCAR_3, "Avançar 3", timeout=self.TIMEOUT_PADRAO)
-        time.sleep(1)
-        self.clicar_seguro(By.XPATH, self.XPATH_AVANCAR_4, "Avançar 4", timeout=self.TIMEOUT_PADRAO)
-        time.sleep(1)
-        self.validar_aba_pagamentos_com_retry()
-        self.adicionar_log("Fluxo alternativo concluído. Já estamos em Pagamentos.")
-        return True
+        self.adicionar_log("Popup detectado. Iniciando fluxo alternativo at? Pagamentos...")
+        self.clicar_popup_sim_se_aparecer(timeout=self.TIMEOUT_PADRAO)
+        if self.esta_na_aba_pagamentos():
+            self.adicionar_log("Pagamentos ficou acess?vel logo ap?s tratar o popup.")
+            return True
+        return self.tentar_ir_pagamentos_via_dados_complementares()
 
     def clicar_carteira(self):
         self.adicionar_log("Clicando em Carteira...")
@@ -1461,21 +1554,42 @@ class RoboCobrancaMensalApp:
         return True
 
     def ir_para_pagamentos(self):
-        self.adicionar_log("Verificando se aparece popup antes de tentar ir para Pagamentos...")
+        self.adicionar_log("Tentando acessar a aba Pagamentos...")
         if self.esta_na_aba_pagamentos():
-            self.adicionar_log("Já está na aba Pagamentos.")
+            self.adicionar_log("J? est? na aba Pagamentos.")
+            self.popup_edicao_tratado = False
             return True
-        if self.popup_sim_apareceu(timeout=self.TIMEOUT_POPUP):
-            self.adicionar_log("Popup apareceu após clicar em Editar.")
-            self.tentar_fluxo_popup_para_pagamentos()
+        popup_tratado = self.popup_edicao_tratado or self.clicar_popup_sim_se_aparecer(timeout=self.TIMEOUT_POPUP)
+        if popup_tratado:
+            if self.esta_na_aba_pagamentos():
+                self.adicionar_log("Pagamentos ficou dispon?vel ap?s tratar o popup.")
+                self.popup_edicao_tratado = False
+                return True
+            self.adicionar_log("Popup tratado. Pulando m?todo r?pido e seguindo direto pela rota de Dados complementares...")
+            try:
+                self.tentar_ir_pagamentos_via_dados_complementares()
+                self.popup_edicao_tratado = False
+                return True
+            except Exception as erro_dados_popup:
+                self.adicionar_log(f"Rota via Dados complementares falhou ap?s popup: {erro_dados_popup}")
+                self.popup_edicao_tratado = False
+                raise Exception(
+                    "N?o foi poss?vel acessar a aba Pagamentos ap?s tratar o popup pela rota de Dados complementares."
+                ) from erro_dados_popup
+        try:
+            self.tentar_ir_pagamentos_via_rapida()
             return True
-        self.adicionar_log("Popup não apareceu. Aguardando liberação da aba Pagamentos...")
-        self.tentar_ir_pagamentos_via_rapida()
-        return True
+        except Exception as erro_rapido:
+            self.adicionar_log(f"M?todo r?pido para Pagamentos falhou: {erro_rapido}")
+        try:
+            self.tentar_ir_pagamentos_via_dados_complementares()
+            return True
+        except Exception as erro_dados:
+            self.adicionar_log(f"Rota via Dados complementares falhou: {erro_dados}")
+            raise Exception(
+                "N?o foi poss?vel acessar a aba Pagamentos nem pelo m?todo r?pido nem pela rota de Dados complementares."
+            ) from erro_dados
 
-    # =========================
-    # COBRANÇA POR CARTÃO
-    # =========================
     def obter_texto_historico_pagamento(self):
         try:
             return self.obter_texto(By.XPATH, self.XPATH_HISTORICO_PAGAMENTO, timeout=self.TIMEOUT_CURTO)
@@ -1748,9 +1862,7 @@ class RoboCobrancaMensalApp:
 
     def voltar_para_pagamentos_pela_aba(self):
         self.adicionar_log("Voltando para a aba Pagamentos...")
-        self.clicar_seguro(By.XPATH, self.XPATH_ABA_PAGAMENTOS_RAPIDA, "aba Pagamentos", timeout=self.TIMEOUT_LONGO)
-        self.validar_aba_pagamentos_com_retry()
-        return True
+        return self.ir_para_pagamentos()
 
     def clicar_link(self):
         self.adicionar_log("Clicando em Link...")
@@ -2076,6 +2188,10 @@ Checkout - Foco Aluguel de Carros"""
 
             self.cobrancas_concluidas = 0
             self.links_gerados = 0
+            self.total_cartao_sucesso = 0
+            self.total_email_sucesso = 0
+            self.total_erros_execucao = 0
+            self.atualizar_resumo_execucao()
 
             usuario = self.entry_usuario.get().strip()
             self.atualizar_progresso(0, self.total_aptos, "Abrindo sistema")
@@ -2148,6 +2264,8 @@ Checkout - Foco Aluguel de Carros"""
                             status_email = "Enviado com Sucesso"
                             status_final = "Link Gerado e Enviado"
                             self.cobrancas_concluidas += 1
+                            self.total_email_sucesso += 1
+                            self.atualizar_resumo_execucao()
                             self.adicionar_log(f"Link enviado por e-mail com sucesso para o contrato {contrato}.")
                         except Exception as erro_email:
                             status_email = "Erro no Envio"
@@ -2180,6 +2298,8 @@ Checkout - Foco Aluguel de Carros"""
                     status_cobranca = "Falha na Cobrança"
                     status_final = "Falha na Cobrança"
                     erro_msg = str(e)
+                    self.total_erros_execucao += 1
+                    self.atualizar_resumo_execucao()
                     self.adicionar_log(f"ERRO definitivo no contrato {contrato}: {str(e)}")
                     self.reset_completo_navegador(f"Erro definitivo no contrato {contrato}")
                     self.abrir_sistema(relogin=True)
