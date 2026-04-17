@@ -8,7 +8,7 @@
   "repasse": {
     "arquivo": "robo_repasse_v6.py",
     "classe": "AppRepasse",
-    "versao": "1.0.4"
+    "versao": "1.0.5"
   },
   "contratos": {
     "arquivo": "bot_contratos.py",
