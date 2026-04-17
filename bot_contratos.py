@@ -311,6 +311,7 @@ class RoboContratosApp:
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
         self.logo_image = None
+        self.logo_label = None
 
         self.create_widgets()
 
@@ -368,7 +369,8 @@ class RoboContratosApp:
 
         logo = self.carregar_logo(reducao=2)
         if logo:
-            ctk.CTkLabel(hero_inner, text="", image=logo).pack(side="left", padx=(0, 18))
+            self.logo_label = ctk.CTkLabel(hero_inner, text="", image=logo)
+            self.logo_label.pack(side="left", padx=(0, 18))
 
         texto = ctk.CTkFrame(hero_inner, fg_color="transparent")
         texto.pack(side="left", fill="x", expand=True)
