@@ -3,6 +3,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
+import customtkinter as ctk
 import os
 import re
 import sys
@@ -48,14 +49,39 @@ def localizar_logo():
     return None
 
 
+class BarraProgressoAdapter:
+    def __init__(self, widget):
+        self.widget = widget
+        self.value = 0.0
+
+    def __setitem__(self, chave, valor):
+        if chave != "value":
+            raise KeyError(chave)
+        self.value = float(valor)
+        self.widget.set(max(0.0, min(1.0, self.value / 100.0)))
+
+    def __getitem__(self, chave):
+        if chave != "value":
+            raise KeyError(chave)
+        return self.value
+
+    def pack(self, *args, **kwargs):
+        return self.widget.pack(*args, **kwargs)
+
+    def configure(self, *args, **kwargs):
+        return self.widget.configure(*args, **kwargs)
+
+
 class RoboCobrancaMensalApp:
     MAIN_BG = "#f6f4f1"
     CARD_BG = "#ffffff"
+    CARD_BORDER = "#eadfdb"
     PRIMARY_TEXT = "#d81919"
     MUTED_TEXT = "#5c5c5c"
     BUTTON_BG = "#ef1a14"
     BUTTON_ACTIVE_BG = "#c91410"
     SUCCESS_TEXT = "#187a2f"
+    SOFT_RED = "#fff1ef"
 
     URL_BASE = "https://coral.aluguefoco.com.br/"
     URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
@@ -129,6 +155,8 @@ class RoboCobrancaMensalApp:
     XPATH_BOTAO_COPIAR_LINK = "/html/body/ngb-modal-window/div/div/foco-pbl-modal/div[2]/div/div[1]/div/button"
 
     def __init__(self, root):
+        ctk.set_appearance_mode("light")
+        ctk.set_default_color_theme("blue")
         self.root = root
         self.root.title("Robô de Cobrança Mensal - Desenvolvido por Diogo Medeiros © 2026")
         self.root.geometry("980x760")
@@ -300,250 +328,241 @@ class RoboCobrancaMensalApp:
     # =========================
     # INTERFACE
     # =========================
+    def criar_secao_card(self, parent, titulo):
+        frame = ctk.CTkFrame(
+            parent,
+            fg_color=self.CARD_BG,
+            corner_radius=22,
+            border_width=1,
+            border_color=self.CARD_BORDER,
+        )
+        frame.pack(fill="x", padx=8, pady=(0, 14))
+        ctk.CTkLabel(
+            frame,
+            text=titulo,
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 18, "bold"),
+        ).pack(anchor="w", padx=18, pady=(16, 12))
+        return frame
+
     def criar_interface(self):
-        outer_frame = ttk.Frame(self.root, style="App.TFrame")
-        outer_frame.pack(fill="both", expand=True)
+        container = ctk.CTkFrame(self.root, fg_color=self.MAIN_BG, corner_radius=0)
+        container.pack(fill="both", expand=True, padx=12, pady=12)
 
-        canvas = tk.Canvas(outer_frame, bg=self.MAIN_BG, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
+        scroll = ctk.CTkScrollableFrame(container, fg_color=self.MAIN_BG, corner_radius=0)
+        scroll.pack(fill="both", expand=True)
 
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        hero = ctk.CTkFrame(
+            scroll,
+            fg_color=self.CARD_BG,
+            corner_radius=26,
+            border_width=1,
+            border_color=self.CARD_BORDER,
+        )
+        hero.pack(fill="x", padx=8, pady=(8, 14))
 
-        main_frame = ttk.Frame(canvas, padding=12, style="App.TFrame")
-        canvas_window = canvas.create_window((0, 0), window=main_frame, anchor="nw")
-
-        def ajustar_rolagem(_event=None):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-
-        def ajustar_largura(event):
-            canvas.itemconfigure(canvas_window, width=event.width)
-
-        main_frame.bind("<Configure>", ajustar_rolagem)
-        canvas.bind("<Configure>", ajustar_largura)
-
-        hero = tk.Frame(main_frame, bg=self.CARD_BG, highlightthickness=1, highlightbackground="#eadfdb")
-        hero.pack(fill="x", pady=(0, 12))
-        hero_inner = tk.Frame(hero, bg=self.CARD_BG)
-        hero_inner.pack(fill="x", padx=20, pady=18)
-
+        hero_inner = ctk.CTkFrame(hero, fg_color="transparent")
+        hero_inner.pack(fill="x", padx=24, pady=24)
         logo = self.carregar_logo(reducao=2)
         if logo:
-            tk.Label(hero_inner, image=logo, bg=self.CARD_BG).pack(side="left", padx=(0, 16))
+            ctk.CTkLabel(hero_inner, text="", image=logo).pack(side="left", padx=(0, 18))
 
-        header_texto = tk.Frame(hero_inner, bg=self.CARD_BG)
+        header_texto = ctk.CTkFrame(hero_inner, fg_color="transparent")
         header_texto.pack(side="left", fill="x", expand=True)
-        tk.Label(
+        ctk.CTkLabel(
             header_texto,
-            text="Cobrança FOCO",
-            bg=self.CARD_BG,
-            fg=self.PRIMARY_TEXT,
-            font=("Segoe UI", 21, "bold")
+            text="Cobranca FOCO",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 30, "bold"),
         ).pack(anchor="w")
-        tk.Label(
+        ctk.CTkLabel(
             header_texto,
-            text="Cobrança, link, e-mail e WhatsApp em um único fluxo operacional.",
-            bg=self.CARD_BG,
-            fg=self.MUTED_TEXT,
-            font=("Segoe UI", 10)
-        ).pack(anchor="w", pady=(4, 0))
-        tk.Label(
+            text="Cobranca, link, e-mail e WhatsApp em um unico fluxo operacional.",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 14),
+        ).pack(anchor="w", pady=(6, 0))
+        ctk.CTkLabel(
             header_texto,
             text="OPERACAO FINANCEIRA",
-            bg=self.CARD_BG,
-            fg="#a65f56",
-            font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", pady=(8, 0))
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.pack(fill="both", expand=True)
+            text_color="#a65f56",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", pady=(10, 0))
 
-        aba_cobranca = ttk.Frame(self.notebook, padding=10)
-        aba_whatsapp = ttk.Frame(self.notebook, padding=10)
-        self.notebook.add(aba_cobranca, text="Cobrança")
-        self.notebook.add(aba_whatsapp, text="WhatsApp")
-
-        topo_cobranca = ttk.Frame(aba_cobranca)
-        topo_cobranca.pack(fill="x", pady=(0, 5))
-
-        frame_login = ttk.LabelFrame(topo_cobranca, text="🔑 Login do Sistema", padding=8)
-        frame_login.pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        ttk.Label(frame_login, text="Usuário:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.entry_usuario = ttk.Entry(frame_login, width=35)
-        self.entry_usuario.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-
-        ttk.Label(frame_login, text="Senha:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.entry_senha = ttk.Entry(frame_login, width=35, show="*")
-        self.entry_senha.grid(row=1, column=1, sticky="w", padx=5, pady=5)
-
-        frame_config = ttk.LabelFrame(topo_cobranca, text="Configurações", padding=8)
-        frame_config.pack(side="left", fill="x", expand=True, padx=(5, 0))
-
-        self.var_headless = tk.BooleanVar(value=True)
-        self.check_headless = ttk.Checkbutton(
-            frame_config,
-            text="Executar em modo invisível (sem abrir janela do Chrome)",
-            variable=self.var_headless
+        self.notebook = ctk.CTkTabview(
+            scroll,
+            fg_color="transparent",
+            segmented_button_fg_color="#f0dfda",
+            segmented_button_selected_color=self.BUTTON_BG,
+            segmented_button_selected_hover_color=self.BUTTON_ACTIVE_BG,
+            text_color="#303030",
         )
-        self.check_headless.pack(anchor="w", padx=5, pady=5)
+        self.notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self.notebook.add("Cobranca")
+        self.notebook.add("WhatsApp")
 
-        ttk.Label(frame_config, text="E-mail em cópia (opcional):").pack(anchor="w", padx=5, pady=(8, 2))
-        self.entry_email_copia = ttk.Entry(frame_config, width=45)
-        self.entry_email_copia.pack(anchor="w", padx=5, pady=(0, 5))
-        ttk.Label(frame_config, text="Modalidade para validar antes de iniciar:").pack(anchor="w", padx=5, pady=(8, 2))
+        aba_cobranca = self.notebook.tab("Cobranca")
+        aba_whatsapp = self.notebook.tab("WhatsApp")
+
+        topo_cobranca = ctk.CTkFrame(aba_cobranca, fg_color="transparent")
+        topo_cobranca.pack(fill="x", pady=(0, 6))
+
+        frame_login = self.criar_secao_card(topo_cobranca, "Acesso ao Sistema")
+        frame_login.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=(0, 10))
+        login_grid = ctk.CTkFrame(frame_login, fg_color="transparent")
+        login_grid.pack(fill="x", padx=18, pady=(0, 18))
+        login_grid.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(login_grid, text="Usuario", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 6))
+        ctk.CTkLabel(login_grid, text="Senha", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(0, 6))
+        self.entry_usuario = ctk.CTkEntry(login_grid, height=42, corner_radius=12)
+        self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        self.entry_senha = ctk.CTkEntry(login_grid, height=42, corner_radius=12, show="*")
+        self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+
+        frame_config = self.criar_secao_card(topo_cobranca, "Configuracoes")
+        frame_config.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=(0, 10))
+        config_box = ctk.CTkFrame(frame_config, fg_color="transparent")
+        config_box.pack(fill="x", padx=18, pady=(0, 18))
+        self.var_headless = tk.BooleanVar(value=True)
+        self.check_headless = ctk.CTkCheckBox(
+            config_box,
+            text="Executar em modo invisivel (sem abrir janela do Chrome)",
+            variable=self.var_headless,
+            font=("Segoe UI", 13),
+            text_color="#303030",
+            checkbox_width=22,
+            checkbox_height=22,
+            corner_radius=8,
+        )
+        self.check_headless.pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(config_box, text="E-mail em copia (opcional)", font=("Segoe UI", 13, "bold"), text_color="#303030").pack(anchor="w", pady=(0, 6))
+        self.entry_email_copia = ctk.CTkEntry(config_box, height=42, corner_radius=12)
+        self.entry_email_copia.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(config_box, text="Modalidade para validar antes de iniciar", font=("Segoe UI", 13, "bold"), text_color="#303030").pack(anchor="w", pady=(0, 6))
         self.var_modalidade = tk.StringVar(value=self.MODALIDADE_MENSAL)
-        self.combo_modalidade = ttk.Combobox(
-            frame_config,
-            textvariable=self.var_modalidade,
+        self.combo_modalidade = ctk.CTkComboBox(
+            config_box,
+            variable=self.var_modalidade,
             values=[self.MODALIDADE_MENSAL, self.MODALIDADE_QUINZENAL],
             state="readonly",
-            width=27
+            height=42,
+            corner_radius=12,
+            command=lambda _valor: self.ao_alterar_modalidade(),
         )
-        self.combo_modalidade.pack(anchor="w", padx=5, pady=(0, 5))
-        self.combo_modalidade.bind("<<ComboboxSelected>>", self.ao_alterar_modalidade)
+        self.combo_modalidade.pack(anchor="w")
 
-        meio_cobranca = ttk.Frame(aba_cobranca)
-        meio_cobranca.pack(fill="x", pady=5)
+        meio_cobranca = ctk.CTkFrame(aba_cobranca, fg_color="transparent")
+        meio_cobranca.pack(fill="x", pady=(0, 6))
 
-        frame_planilha = ttk.LabelFrame(meio_cobranca, text="Planilha Base", padding=8)
-        frame_planilha.pack(side="left", fill="both", expand=True, padx=(0, 5))
-
-        self.btn_planilha = ttk.Button(
-            frame_planilha,
+        frame_planilha = self.criar_secao_card(meio_cobranca, "Planilha Base")
+        frame_planilha.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=(0, 10))
+        planilha_box = ctk.CTkFrame(frame_planilha, fg_color="transparent")
+        planilha_box.pack(fill="x", padx=18, pady=(0, 18))
+        self.btn_planilha = ctk.CTkButton(
+            planilha_box,
             text="Selecionar Planilha Excel",
             command=self.selecionar_planilha,
-            style="Secondary.TButton"
+            height=44,
+            width=240,
+            corner_radius=14,
+            fg_color="#ffffff",
+            text_color=self.PRIMARY_TEXT,
+            hover_color=self.SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 14, "bold"),
         )
-        self.btn_planilha.pack(pady=(2, 5))
+        self.btn_planilha.pack(anchor="center", pady=(0, 10))
+        self.label_planilha = ctk.CTkLabel(planilha_box, text="Nenhuma planilha selecionada", text_color="#2f64d6", font=("Segoe UI", 12), anchor="w", justify="left")
+        self.label_planilha.pack(fill="x", pady=(0, 8))
+        self.label_aptos = ctk.CTkLabel(planilha_box, text=f"Contratos aptos para cobranca ({self.var_modalidade.get()}): 0", text_color="#303030", font=("Segoe UI", 14, "bold"), anchor="w", justify="left")
+        self.label_aptos.pack(fill="x")
 
-        self.label_planilha = ttk.Label(
-            frame_planilha,
-            text="Nenhuma planilha selecionada",
-            foreground="blue"
+        lateral_execucao = self.criar_secao_card(meio_cobranca, "Execucao")
+        lateral_execucao.pack(side="left", fill="both", padx=(6, 0), pady=(0, 10))
+        exec_box = ctk.CTkFrame(lateral_execucao, fg_color="transparent")
+        exec_box.pack(fill="both", padx=18, pady=(0, 18))
+        self.progress = BarraProgressoAdapter(
+            ctk.CTkProgressBar(exec_box, height=16, corner_radius=999, progress_color=self.BUTTON_BG, fg_color="#f2dfdb")
         )
-        self.label_planilha.pack(anchor="w", padx=5, pady=5)
+        self.progress.pack(fill="x", pady=(0, 10))
+        self.progress.widget.set(0)
+        self.label_progresso = ctk.CTkLabel(exec_box, text="0/0 - Aguardando inicio...", text_color=self.MUTED_TEXT, font=("Segoe UI", 13))
+        self.label_progresso.pack(pady=(0, 12))
+        self.btn_iniciar = ctk.CTkButton(exec_box, text="INICIAR ROBO", command=self.iniciar_robo, height=48, corner_radius=14, fg_color=self.BUTTON_BG, hover_color=self.BUTTON_ACTIVE_BG, font=("Segoe UI", 15, "bold"))
+        self.btn_iniciar.pack(fill="x", pady=(0, 6))
+        self.btn_pausar = ctk.CTkButton(exec_box, text="Pausar", command=self.alternar_pausa, state="disabled", height=46, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
+        self.btn_pausar.pack(fill="x", pady=6)
+        self.btn_parar = ctk.CTkButton(exec_box, text="Parar", command=self.solicitar_parada, state="disabled", height=46, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
+        self.btn_parar.pack(fill="x", pady=(6, 0))
 
-        self.label_aptos = ttk.Label(
-            frame_planilha,
-            text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): 0",
-            font=("Arial", 10, "bold")
-        )
-        self.label_aptos.pack(anchor="w", padx=5, pady=5)
-
-        lateral_execucao = ttk.LabelFrame(meio_cobranca, text="Execução", padding=8)
-        lateral_execucao.pack(side="left", fill="both", padx=(5, 0))
-
-        frame_progresso = ttk.Frame(lateral_execucao)
-        frame_progresso.pack(fill="x")
-
-        self.progress = ttk.Progressbar(frame_progresso, orient="horizontal", mode="determinate", style="Accent.Horizontal.TProgressbar")
-        self.progress.pack(fill="x", padx=5, pady=5)
-
-        self.label_progresso = ttk.Label(frame_progresso, text="0/0 - Aguardando início...")
-        self.label_progresso.pack(pady=5)
-
-        frame_botao = ttk.Frame(lateral_execucao)
-        frame_botao.pack(fill="x", pady=(8, 0))
-
-        self.btn_iniciar = ttk.Button(frame_botao, text="INICIAR ROBÔ", command=self.iniciar_robo, style="Primary.TButton")
-        self.btn_iniciar.pack(fill="x", pady=(0, 4))
-
-        self.btn_pausar = ttk.Button(frame_botao, text="Pausar", command=self.alternar_pausa, state="disabled", style="Secondary.TButton")
-        self.btn_pausar.pack(fill="x", pady=4)
-
-        self.btn_parar = ttk.Button(frame_botao, text="Parar", command=self.solicitar_parada, state="disabled", style="Secondary.TButton")
-        self.btn_parar.pack(fill="x", pady=(4, 0))
-
-        frame_logs = ttk.LabelFrame(aba_cobranca, text="Logs em Tempo Real", padding=8)
-        frame_logs.pack(fill="both", expand=True, pady=(5, 0))
-
-        self.txt_logs = scrolledtext.ScrolledText(frame_logs, height=14, wrap="word", state="disabled", font=("Consolas", 9))
+        frame_logs = self.criar_secao_card(aba_cobranca, "Logs em Tempo Real")
+        logs_box = ctk.CTkFrame(frame_logs, fg_color="transparent")
+        logs_box.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        self.txt_logs = ctk.CTkTextbox(logs_box, height=260, corner_radius=16, fg_color="#fffaf9", border_width=1, border_color=self.CARD_BORDER, text_color="#2d2d2d", font=("Consolas", 12))
         self.txt_logs.pack(fill="both", expand=True)
-        self.txt_logs.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
+        self.txt_logs.configure(state="disabled")
 
-        frame_info_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Autenticação do WhatsApp Web", padding=10)
-        frame_info_whatsapp.pack(fill="x", pady=5)
+        frame_info_whatsapp = self.criar_secao_card(aba_whatsapp, "Autenticacao do WhatsApp Web")
+        info_box = ctk.CTkFrame(frame_info_whatsapp, fg_color="transparent")
+        info_box.pack(fill="x", padx=18, pady=(0, 18))
+        ctk.CTkLabel(
+            info_box,
+            text="Selecione o relatorio gerado pela cobranca. O robo abrira o WhatsApp Web, aguardara a autenticacao e enviara as mensagens com o mesmo texto do e-mail.",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 13),
+            justify="left",
+            wraplength=900,
+        ).pack(anchor="w")
 
-        ttk.Label(
-            frame_info_whatsapp,
-            text=(
-                "Selecione o relatório gerado pela cobrança. O robô abrirá o WhatsApp Web, "
-                "aguardará a autenticação e enviará as mensagens com o mesmo texto do e-mail."
-            ),
-            wraplength=880,
-            justify="left"
-        ).pack(anchor="w", padx=5, pady=5)
-
-        frame_relatorio_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Relatório Base da Cobrança", padding=10)
-        frame_relatorio_whatsapp.pack(fill="x", pady=5)
-
-        self.btn_relatorio_whatsapp = ttk.Button(
-            frame_relatorio_whatsapp,
-            text="Selecionar Relatório da Cobrança",
+        frame_relatorio_whatsapp = self.criar_secao_card(aba_whatsapp, "Relatorio Base da Cobranca")
+        relatorio_box = ctk.CTkFrame(frame_relatorio_whatsapp, fg_color="transparent")
+        relatorio_box.pack(fill="x", padx=18, pady=(0, 18))
+        self.btn_relatorio_whatsapp = ctk.CTkButton(
+            relatorio_box,
+            text="Selecionar Relatorio da Cobranca",
             command=self.selecionar_relatorio_whatsapp,
-            style="Secondary.TButton"
+            height=44,
+            width=280,
+            corner_radius=14,
+            fg_color="#ffffff",
+            text_color=self.PRIMARY_TEXT,
+            hover_color=self.SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 14, "bold"),
         )
-        self.btn_relatorio_whatsapp.pack(pady=5)
+        self.btn_relatorio_whatsapp.pack(anchor="center", pady=(0, 10))
+        self.label_relatorio_whatsapp = ctk.CTkLabel(relatorio_box, text="Nenhum relatorio selecionado", text_color="#2f64d6", font=("Segoe UI", 12), anchor="w", justify="left")
+        self.label_relatorio_whatsapp.pack(fill="x", pady=(0, 8))
+        self.label_whatsapp_aptos = ctk.CTkLabel(relatorio_box, text="Contratos aptos para envio no WhatsApp: 0", text_color="#303030", font=("Segoe UI", 14, "bold"), anchor="w", justify="left")
+        self.label_whatsapp_aptos.pack(fill="x")
 
-        self.label_relatorio_whatsapp = ttk.Label(
-            frame_relatorio_whatsapp,
-            text="Nenhum relatório selecionado",
-            foreground="blue"
+        frame_progresso_whatsapp = self.criar_secao_card(aba_whatsapp, "Progresso do WhatsApp")
+        progresso_box_whatsapp = ctk.CTkFrame(frame_progresso_whatsapp, fg_color="transparent")
+        progresso_box_whatsapp.pack(fill="x", padx=18, pady=(0, 18))
+        self.progress_whatsapp = BarraProgressoAdapter(
+            ctk.CTkProgressBar(progresso_box_whatsapp, height=16, corner_radius=999, progress_color=self.BUTTON_BG, fg_color="#f2dfdb")
         )
-        self.label_relatorio_whatsapp.pack(anchor="w", padx=5, pady=5)
+        self.progress_whatsapp.pack(fill="x", pady=(0, 10))
+        self.progress_whatsapp.widget.set(0)
+        self.label_progresso_whatsapp = ctk.CTkLabel(progresso_box_whatsapp, text="0/0 - Aguardando inicio...", text_color=self.MUTED_TEXT, font=("Segoe UI", 13))
+        self.label_progresso_whatsapp.pack()
 
-        self.label_whatsapp_aptos = ttk.Label(
-            frame_relatorio_whatsapp,
-            text="Contratos aptos para envio no WhatsApp: 0",
-            font=("Arial", 10, "bold")
-        )
-        self.label_whatsapp_aptos.pack(anchor="w", padx=5, pady=5)
+        frame_botoes_whatsapp = ctk.CTkFrame(aba_whatsapp, fg_color="transparent")
+        frame_botoes_whatsapp.pack(fill="x", padx=8, pady=(0, 10))
+        self.btn_iniciar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="INICIAR WHATSAPP", command=self.iniciar_robo_whatsapp, height=48, width=220, corner_radius=14, fg_color=self.BUTTON_BG, hover_color=self.BUTTON_ACTIVE_BG, font=("Segoe UI", 15, "bold"))
+        self.btn_iniciar_whatsapp.pack(side="left", padx=(0, 10))
+        self.btn_pausar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="Pausar", command=self.alternar_pausa_whatsapp, state="disabled", height=46, width=150, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
+        self.btn_pausar_whatsapp.pack(side="left", padx=10)
+        self.btn_parar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="Parar", command=self.solicitar_parada_whatsapp, state="disabled", height=46, width=150, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
+        self.btn_parar_whatsapp.pack(side="left", padx=(10, 0))
 
-        frame_progresso_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Progresso do WhatsApp", padding=10)
-        frame_progresso_whatsapp.pack(fill="x", pady=5)
-
-        self.progress_whatsapp = ttk.Progressbar(frame_progresso_whatsapp, orient="horizontal", mode="determinate", style="Accent.Horizontal.TProgressbar")
-        self.progress_whatsapp.pack(fill="x", padx=5, pady=5)
-
-        self.label_progresso_whatsapp = ttk.Label(frame_progresso_whatsapp, text="0/0 - Aguardando início...")
-        self.label_progresso_whatsapp.pack(pady=5)
-
-        frame_botoes_whatsapp = ttk.Frame(aba_whatsapp)
-        frame_botoes_whatsapp.pack(fill="x", pady=10)
-
-        self.btn_iniciar_whatsapp = ttk.Button(
-            frame_botoes_whatsapp,
-            text="INICIAR WHATSAPP",
-            command=self.iniciar_robo_whatsapp,
-            style="Primary.TButton"
-        )
-        self.btn_iniciar_whatsapp.pack(side="left", padx=5)
-
-        self.btn_pausar_whatsapp = ttk.Button(
-            frame_botoes_whatsapp,
-            text="Pausar",
-            command=self.alternar_pausa_whatsapp,
-            state="disabled",
-            style="Secondary.TButton"
-        )
-        self.btn_pausar_whatsapp.pack(side="left", padx=5)
-
-        self.btn_parar_whatsapp = ttk.Button(
-            frame_botoes_whatsapp,
-            text="Parar",
-            command=self.solicitar_parada_whatsapp,
-            state="disabled",
-            style="Secondary.TButton"
-        )
-        self.btn_parar_whatsapp.pack(side="left", padx=5)
-
-        frame_logs_whatsapp = ttk.LabelFrame(aba_whatsapp, text="Logs do WhatsApp", padding=10)
-        frame_logs_whatsapp.pack(fill="both", expand=True, pady=5)
-
-        self.txt_logs_whatsapp = scrolledtext.ScrolledText(frame_logs_whatsapp, height=13, wrap="word", state="disabled", font=("Consolas", 9))
+        frame_logs_whatsapp = self.criar_secao_card(aba_whatsapp, "Logs do WhatsApp")
+        logs_box_whatsapp = ctk.CTkFrame(frame_logs_whatsapp, fg_color="transparent")
+        logs_box_whatsapp.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        self.txt_logs_whatsapp = ctk.CTkTextbox(logs_box_whatsapp, height=240, corner_radius=16, fg_color="#fffaf9", border_width=1, border_color=self.CARD_BORDER, text_color="#2d2d2d", font=("Consolas", 12))
         self.txt_logs_whatsapp.pack(fill="both", expand=True)
-        self.txt_logs_whatsapp.configure(bg="#fffaf9", fg="#303030", insertbackground=self.PRIMARY_TEXT, relief="flat", bd=0, highlightthickness=1, highlightbackground="#eadfdb")
+        self.txt_logs_whatsapp.configure(state="disabled")
 
     # =========================
     # LOGS / PROGRESSO
@@ -578,7 +597,7 @@ class RoboCobrancaMensalApp:
         texto = f"{atual}/{total}"
         if texto_extra:
             texto += f" — {texto_extra}"
-        self.label_progresso.config(text=texto)
+        self.label_progresso.configure(text=texto)
         self.root.update_idletasks()
 
     def atualizar_progresso_whatsapp(self, atual, total, texto_extra=""):
@@ -587,7 +606,7 @@ class RoboCobrancaMensalApp:
         texto = f"{atual}/{total}"
         if texto_extra:
             texto += f" - {texto_extra}"
-        self.label_progresso_whatsapp.config(text=texto)
+        self.label_progresso_whatsapp.configure(text=texto)
         self.root.update_idletasks()
 
     # =========================
@@ -596,16 +615,16 @@ class RoboCobrancaMensalApp:
     def alternar_pausa(self):
         self.pausado = not self.pausado
         if self.pausado:
-            self.btn_pausar.config(text="Retomar")
+            self.btn_pausar.configure(text="Retomar")
             self.adicionar_log("Pausa solicitada. O robô vai pausar no próximo ponto seguro.")
         else:
-            self.btn_pausar.config(text="Pausar")
+            self.btn_pausar.configure(text="Pausar")
             self.adicionar_log("Execução retomada.")
 
     def solicitar_parada(self):
         self.parar_solicitado = True
         self.pausado = False
-        self.btn_pausar.config(text="Pausar")
+        self.btn_pausar.configure(text="Pausar")
         self.adicionar_log("Parada solicitada. O robô vai encerrar no próximo ponto seguro.")
 
     def verificar_controle_execucao(self):
@@ -624,16 +643,16 @@ class RoboCobrancaMensalApp:
     def alternar_pausa_whatsapp(self):
         self.whatsapp_pausado = not self.whatsapp_pausado
         if self.whatsapp_pausado:
-            self.btn_pausar_whatsapp.config(text="Retomar")
+            self.btn_pausar_whatsapp.configure(text="Retomar")
             self.adicionar_log_whatsapp("Pausa solicitada. O envio vai pausar no próximo ponto seguro.")
         else:
-            self.btn_pausar_whatsapp.config(text="Pausar")
+            self.btn_pausar_whatsapp.configure(text="Pausar")
             self.adicionar_log_whatsapp("Envio retomado.")
 
     def solicitar_parada_whatsapp(self):
         self.whatsapp_parar_solicitado = True
         self.whatsapp_pausado = False
-        self.btn_pausar_whatsapp.config(text="Pausar")
+        self.btn_pausar_whatsapp.configure(text="Pausar")
         self.adicionar_log_whatsapp("Parada solicitada. O envio vai encerrar no próximo ponto seguro.")
 
     def verificar_controle_execucao_whatsapp(self):
@@ -841,8 +860,8 @@ class RoboCobrancaMensalApp:
         return registros, registros_aptos
 
     def atualizar_interface_planilha(self):
-        self.label_planilha.config(text=self.planilha_path or "Nenhuma planilha selecionada")
-        self.label_aptos.config(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): {self.total_aptos}")
+        self.label_planilha.configure(text=self.planilha_path or "Nenhuma planilha selecionada")
+        self.label_aptos.configure(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): {self.total_aptos}")
         self.atualizar_progresso(0, self.total_aptos, "Planilha carregada" if self.total_aptos > 0 else "Sem contratos aptos")
 
     def registrar_resumo_planilha(self):
@@ -875,8 +894,8 @@ class RoboCobrancaMensalApp:
         self.df_base = []
         self.df_aptos = []
         self.total_aptos = 0
-        self.label_planilha.config(text="Nenhuma planilha selecionada")
-        self.label_aptos.config(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): 0")
+        self.label_planilha.configure(text="Nenhuma planilha selecionada")
+        self.label_aptos.configure(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): 0")
         self.atualizar_progresso(0, 0, "Erro na leitura da planilha")
 
     def selecionar_planilha(self):
@@ -901,8 +920,8 @@ class RoboCobrancaMensalApp:
         self.whatsapp_df_base = []
         self.whatsapp_df_aptos = []
         self.whatsapp_total_aptos = 0
-        self.label_relatorio_whatsapp.config(text="Nenhum relatório selecionado")
-        self.label_whatsapp_aptos.config(text="Contratos aptos para envio no WhatsApp: 0")
+        self.label_relatorio_whatsapp.configure(text="Nenhum relatório selecionado")
+        self.label_whatsapp_aptos.configure(text="Contratos aptos para envio no WhatsApp: 0")
         self.atualizar_progresso_whatsapp(0, 0, "Erro na leitura do relatório")
 
     def normalizar_telefone_whatsapp(self, valor):
@@ -954,8 +973,8 @@ class RoboCobrancaMensalApp:
         return linhas, aptos
 
     def atualizar_interface_whatsapp(self):
-        self.label_relatorio_whatsapp.config(text=self.whatsapp_report_input_path or "Nenhum relatório selecionado")
-        self.label_whatsapp_aptos.config(text=f"Contratos aptos para envio no WhatsApp: {self.whatsapp_total_aptos}")
+        self.label_relatorio_whatsapp.configure(text=self.whatsapp_report_input_path or "Nenhum relatório selecionado")
+        self.label_whatsapp_aptos.configure(text=f"Contratos aptos para envio no WhatsApp: {self.whatsapp_total_aptos}")
         self.atualizar_progresso_whatsapp(
             0,
             self.whatsapp_total_aptos,
@@ -2037,9 +2056,9 @@ Checkout - Foco Aluguel de Carros"""
         self.pausado = False
         self.parar_solicitado = False
         self.contrato_em_andamento = ""
-        self.btn_iniciar.config(state="disabled")
-        self.btn_pausar.config(state="normal", text="Pausar")
-        self.btn_parar.config(state="normal")
+        self.btn_iniciar.configure(state="disabled")
+        self.btn_pausar.configure(state="normal", text="Pausar")
+        self.btn_parar.configure(state="normal")
         self.adicionar_log("Iniciando robô...")
         thread = threading.Thread(target=self.executar_robo, daemon=True)
         thread.start()
@@ -2223,9 +2242,9 @@ Checkout - Foco Aluguel de Carros"""
         finally:
             self.fechar_driver()
             self.adicionar_log("Navegador encerrado.")
-            self.btn_iniciar.config(state="normal")
-            self.btn_pausar.config(state="disabled", text="Pausar")
-            self.btn_parar.config(state="disabled")
+            self.btn_iniciar.configure(state="normal")
+            self.btn_pausar.configure(state="disabled", text="Pausar")
+            self.btn_parar.configure(state="disabled")
             self.pausado = False
             self.parar_solicitado = False
             self.contrato_em_andamento = ""
@@ -2249,9 +2268,9 @@ Checkout - Foco Aluguel de Carros"""
         self.whatsapp_pausado = False
         self.whatsapp_parar_solicitado = False
         self.whatsapp_item_em_andamento = ""
-        self.btn_iniciar_whatsapp.config(state="disabled")
-        self.btn_pausar_whatsapp.config(state="normal", text="Pausar")
-        self.btn_parar_whatsapp.config(state="normal")
+        self.btn_iniciar_whatsapp.configure(state="disabled")
+        self.btn_pausar_whatsapp.configure(state="normal", text="Pausar")
+        self.btn_parar_whatsapp.configure(state="normal")
         self.adicionar_log_whatsapp("Iniciando automação de WhatsApp...")
         thread = threading.Thread(target=self.executar_robo_whatsapp, daemon=True)
         thread.start()
@@ -2341,9 +2360,9 @@ Checkout - Foco Aluguel de Carros"""
         finally:
             self.fechar_driver_whatsapp()
             self.adicionar_log_whatsapp("Navegador do WhatsApp encerrado.")
-            self.btn_iniciar_whatsapp.config(state="normal")
-            self.btn_pausar_whatsapp.config(state="disabled", text="Pausar")
-            self.btn_parar_whatsapp.config(state="disabled")
+            self.btn_iniciar_whatsapp.configure(state="normal")
+            self.btn_pausar_whatsapp.configure(state="disabled", text="Pausar")
+            self.btn_parar_whatsapp.configure(state="disabled")
             self.whatsapp_pausado = False
             self.whatsapp_parar_solicitado = False
             self.whatsapp_item_em_andamento = ""
