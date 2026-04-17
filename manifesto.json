@@ -3,7 +3,7 @@
   "cobranca": {
     "arquivo": "bot_cobranca_mensal_v1.py",
     "classe": "RoboCobrancaMensalApp",
-    "versao": "1.1.1"
+    "versao": "1.1.2"
   },
   "repasse": {
     "arquivo": "robo_repasse_v6.py",
