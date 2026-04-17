@@ -11,6 +11,7 @@ import customtkinter as ctk
 import multiprocessing
 import pandas as pd
 import winsound
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -318,9 +319,12 @@ class RoboContratosApp:
         if not caminho_logo:
             return None
         try:
-            logo = tk.PhotoImage(file=caminho_logo)
+            imagem = Image.open(caminho_logo)
+            largura, altura = imagem.size
             if reducao > 1:
-                logo = logo.subsample(reducao, reducao)
+                largura = max(1, largura // reducao)
+                altura = max(1, altura // reducao)
+            logo = ctk.CTkImage(light_image=imagem, dark_image=imagem, size=(largura, altura))
             self.logo_image = logo
             return logo
         except Exception:
