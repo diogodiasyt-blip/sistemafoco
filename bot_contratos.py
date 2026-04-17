@@ -289,15 +289,30 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
 
 
 class RoboContratosApp:
-    def __init__(self):
+    def __init__(self, root=None):
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
-        self.root = ctk.CTk()
-        self.root.title("Robo de Contratos Coral - Desenvolvido por Diogo Medeiros © 2026")
-        self.root.geometry("1120x820")
-        self.root.minsize(980, 720)
-        self.root.configure(fg_color=MAIN_BG)
+        default_root = getattr(tk, "_default_root", None)
+        self.owns_root = root is None and default_root is None
+        if root is not None:
+            self.root = root
+            try:
+                self.root.configure(bg=MAIN_BG)
+            except Exception:
+                pass
+        elif default_root is not None:
+            self.root = ctk.CTkToplevel(default_root)
+            self.root.title("Robo de Contratos Coral - Desenvolvido por Diogo Medeiros ?? 2026")
+            self.root.geometry("1120x820")
+            self.root.minsize(980, 720)
+            self.root.configure(fg_color=MAIN_BG)
+        else:
+            self.root = ctk.CTk()
+            self.root.title("Robo de Contratos Coral - Desenvolvido por Diogo Medeiros ?? 2026")
+            self.root.geometry("1120x820")
+            self.root.minsize(980, 720)
+            self.root.configure(fg_color=MAIN_BG)
 
         desktop = get_desktop_path()
         pasta_padrao = os.path.join(desktop, "Contratos_Foco")
