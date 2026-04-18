@@ -1,6 +1,6 @@
 {
-  "hub_version": "1.0.5",
-  "package": "SistemaFOCO_1.0.5.zip",
-  "package_url": "https://github.com/diogodiasyt-blip/sistemafoco/releases/download/relase/SistemaFOCO_1.0.5.zip",
+  "hub_version": "1.0.3",
+  "package": "SistemaFOCO_1.0.3.zip",
+  "package_url": "https://github.com/diogodiasyt-blip/sistemafoco/releases/download/relase/SistemaFOCO_1.0.3.zip",
   "entrypoint": "SistemaFOCO.exe"
 }
