@@ -1436,6 +1436,10 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 
 
@@ -1469,7 +1473,7 @@ class BillingApp(ctk.CTkToplevel):
         self.workbook_context: WorkbookContext | None = None
         self.processing_thread: threading.Thread | None = None
         self.bot_instance: ProtheusBot | None = None
-        self.logo_image: tk.PhotoImage | None = None
+        self.logo_image = None
         self.pause_requested = threading.Event()
         self.stop_requested = threading.Event()
         self.is_processing = False
@@ -1553,7 +1557,7 @@ class BillingApp(ctk.CTkToplevel):
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w", pady=(10, 0))
 
-    def _load_logo(self) -> tk.PhotoImage | None:
+    def _load_logo(self):
         candidates = []
         env_logo = os.getenv("FOCO_LOGO_PNG")
         env_assets = os.getenv("FOCO_ASSETS_DIR")
@@ -1568,6 +1572,11 @@ class BillingApp(ctk.CTkToplevel):
         if logo_path is None:
             return None
         try:
+            if Image is not None:
+                image = Image.open(logo_path)
+                self.logo_image = ctk.CTkImage(light_image=image, dark_image=image, size=(112, 56))
+                return self.logo_image
+
             logo = tk.PhotoImage(file=str(logo_path))
             self.logo_image = logo.subsample(2, 2)
             return self.logo_image
