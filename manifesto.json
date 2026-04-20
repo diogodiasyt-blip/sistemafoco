@@ -14,5 +14,10 @@
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
     "versao": "1.1.1"
+  },
+  "faturamento": {
+    "arquivo": "robo_faturamento_v1.py",
+    "classe": "BillingApp",
+    "versao": "1.0.1"
   }
 }
