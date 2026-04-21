@@ -1430,20 +1430,25 @@ class ProtheusBot:
 
 
 # ===== main.py =====
+import getpass
 import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
+import requests
 try:
     from PIL import Image
 except Exception:
     Image = None
 
+URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
+URL_PING_ABERTURA = "https://docs.google.com/forms/d/e/1FAIpQLScmxNbTO-vXw0LEOKIyEhSpIl9aTbw8x5hnEI5VY2eVMRh5gQ/formResponse"
 
 
-class BillingApp(ctk.CTkToplevel):
+
+class BillingApp(ctk.CTk):
     MAIN_BG = "#f6f4f1"
     CARD_BG = "#ffffff"
     CARD_BORDER = "#eadfdb"
@@ -1454,16 +1459,10 @@ class BillingApp(ctk.CTkToplevel):
     SUCCESS_TEXT = "#187a2f"
     SOFT_RED = "#fff1ef"
 
-    def __init__(self, master=None) -> None:
+    def __init__(self) -> None:
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
-        self._standalone_root = None
-        if master is None:
-            self._standalone_root = ctk.CTk()
-            self._standalone_root.withdraw()
-            super().__init__(self._standalone_root)
-        else:
-            super().__init__(master)
+        super().__init__()
 
         self.title(APP_TITLE)
         self.geometry(APP_GEOMETRY)
@@ -1474,6 +1473,7 @@ class BillingApp(ctk.CTkToplevel):
         self.processing_thread: threading.Thread | None = None
         self.bot_instance: ProtheusBot | None = None
         self.logo_image = None
+        self.logo_label = None
         self.pause_requested = threading.Event()
         self.stop_requested = threading.Event()
         self.is_processing = False
@@ -1483,6 +1483,7 @@ class BillingApp(ctk.CTkToplevel):
         self.username_var = ctk.StringVar()
         self.password_var = ctk.StringVar()
         self.file_path_var = ctk.StringVar()
+        self.output_dir_var = ctk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
         self.headless_var = ctk.BooleanVar(value=False)
 
         self.total_var = ctk.StringVar(value="0")
@@ -1495,6 +1496,7 @@ class BillingApp(ctk.CTkToplevel):
         self.start_button: ctk.CTkButton | None = None
         self.pause_button: ctk.CTkButton | None = None
         self.stop_button: ctk.CTkButton | None = None
+        self.counter_value_labels: dict[str, ctk.CTkLabel] = {}
 
         self._build_layout()
         self._update_action_buttons()
@@ -1533,7 +1535,14 @@ class BillingApp(ctk.CTkToplevel):
 
         logo = self._load_logo()
         if logo:
-            ctk.CTkLabel(hero_inner, text="", image=logo).pack(side="left", padx=(0, 18))
+            try:
+                self.logo_label = ctk.CTkLabel(hero_inner, text="", image=logo)
+                self.logo_label.pack(side="left", padx=(0, 18))
+            except Exception:
+                self.logo_image = None
+                self._build_logo_text(hero_inner)
+        else:
+            self._build_logo_text(hero_inner)
 
         header_text = ctk.CTkFrame(hero_inner, fg_color="transparent")
         header_text.pack(side="left", fill="x", expand=True)
@@ -1558,36 +1567,48 @@ class BillingApp(ctk.CTkToplevel):
         ).pack(anchor="w", pady=(10, 0))
 
     def _load_logo(self):
-        candidates = []
-        env_logo = os.getenv("FOCO_LOGO_PNG")
-        env_assets = os.getenv("FOCO_ASSETS_DIR")
+        logo_candidates = []
+
+        env_logo = os.environ.get("FOCO_LOGO_PNG", "").strip()
         if env_logo:
-            candidates.append(Path(env_logo))
+            logo_candidates.append(Path(env_logo))
+
+        env_assets = os.environ.get("FOCO_ASSETS_DIR", "").strip()
         if env_assets:
-            candidates.append(Path(env_assets) / "logo.png")
-        candidates.append(Path(__file__).with_name("logo.png"))
-        candidates.append(Path(__file__).resolve().parent.parent / "assets" / "logo.png")
+            logo_candidates.append(Path(env_assets) / "logo.png")
 
-        logo_path = next((path for path in candidates if path.exists()), None)
-        if logo_path is None:
-            return None
-        try:
-            if Image is not None:
+        logo_candidates.append(Path(__file__).with_name("logo.png"))
+        logo_candidates.append(Path(__file__).resolve().parent.parent / "assets" / "logo.png")
+
+        for logo_path in logo_candidates:
+            try:
+                if not logo_path.exists() or Image is None:
+                    continue
                 image = Image.open(logo_path)
-                self.logo_image = ctk.CTkImage(light_image=image, dark_image=image, size=(112, 56))
+                self.logo_image = ctk.CTkImage(light_image=image, dark_image=image, size=(86, 52))
                 return self.logo_image
+            except Exception:
+                continue
+        return None
 
-            logo = tk.PhotoImage(file=str(logo_path))
-            self.logo_image = logo.subsample(2, 2)
-            return self.logo_image
-        except Exception:
-            return None
+    def _build_logo_text(self, parent: ctk.CTkFrame) -> None:
+        brand = ctk.CTkFrame(parent, fg_color="transparent")
+        brand.pack(side="left", padx=(0, 18))
+        ctk.CTkLabel(
+            brand,
+            text="foco,",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 24, "bold"),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            brand,
+            text="aluguel de carros",
+            text_color="#c7463f",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 0))
 
     def run(self) -> None:
-        if self._standalone_root is not None:
-            self._standalone_root.mainloop()
-        else:
-            self.mainloop()
+        self.mainloop()
 
     def _build_access_section(self, parent: ctk.CTkScrollableFrame) -> None:
         access = self._create_section(parent, 1, "Acesso ao Protheus")
@@ -1601,7 +1622,7 @@ class BillingApp(ctk.CTkToplevel):
         self._entry(grid, self.password_var, show="*").grid(row=1, column=1, sticky="ew", padx=(10, 0))
 
     def _build_plan_section(self, parent: ctk.CTkScrollableFrame) -> None:
-        plan = self._create_section(parent, 2, "Planilha")
+        plan = self._create_section(parent, 2, "Planilha e Destino")
         grid = ctk.CTkFrame(plan, fg_color="transparent")
         grid.pack(fill="x", padx=18, pady=(0, 18))
         grid.grid_columnconfigure(0, weight=1)
@@ -1609,6 +1630,9 @@ class BillingApp(ctk.CTkToplevel):
         self._form_label(grid, "Planilha").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self._entry(grid, self.file_path_var).grid(row=1, column=0, sticky="ew", padx=(0, 10), pady=(0, 10))
         self._secondary_button(grid, "Selecionar", self.select_excel_file, width=150).grid(row=1, column=1, sticky="e", pady=(0, 10))
+
+        self._form_label(grid, "Saida").grid(row=2, column=0, sticky="w", pady=(0, 6))
+        self._entry(grid, self.output_dir_var).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
 
         ctk.CTkCheckBox(
             grid,
@@ -1618,7 +1642,7 @@ class BillingApp(ctk.CTkToplevel):
             fg_color=self.BUTTON_BG,
             hover_color=self.BUTTON_ACTIVE_BG,
             border_color="#d9c9c3",
-        ).grid(row=2, column=0, sticky="w")
+        ).grid(row=4, column=0, sticky="w")
 
     def _build_indicator_section(self, parent: ctk.CTkScrollableFrame) -> None:
         indicators = self._create_section(parent, 3, "Indicadores")
@@ -1627,11 +1651,12 @@ class BillingApp(ctk.CTkToplevel):
         for index in range(5):
             counters.grid_columnconfigure(index, weight=1)
 
-        self._counter_card(counters, 0, "Total", self.total_var)
-        self._counter_card(counters, 1, "Aptos", self.ready_var)
-        self._counter_card(counters, 2, "Faturados", self.success_var)
-        self._counter_card(counters, 3, "Ignorados", self.ignored_var)
-        self._counter_card(counters, 4, "Erros", self.error_var)
+        self._counter_card(counters, 0, "Total", "total", self.total_var)
+        self._counter_card(counters, 1, "Aptos", "ready", self.ready_var)
+        self._counter_card(counters, 2, "Faturados", "success", self.success_var)
+        self._counter_card(counters, 3, "Ignorados", "ignored", self.ignored_var)
+        self._counter_card(counters, 4, "Erros", "error", self.error_var)
+        self._refresh_counter_cards()
 
     def _build_execution_section(self, parent: ctk.CTkScrollableFrame) -> None:
         body = self._create_section(parent, 4, "Execucao")
@@ -1744,7 +1769,7 @@ class BillingApp(ctk.CTkToplevel):
             font=("Segoe UI", 14, "bold"),
         )
 
-    def _counter_card(self, parent: ctk.CTkFrame, column: int, title: str, variable: ctk.StringVar) -> None:
+    def _counter_card(self, parent: ctk.CTkFrame, column: int, title: str, key: str, variable: ctk.StringVar) -> None:
         card = ctk.CTkFrame(
             parent,
             fg_color="#fffdfc",
@@ -1759,12 +1784,27 @@ class BillingApp(ctk.CTkToplevel):
             text_color=self.MUTED_TEXT,
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w", padx=12, pady=(10, 2))
-        ctk.CTkLabel(
+        value_label = ctk.CTkLabel(
             card,
-            textvariable=variable,
+            text=variable.get(),
             text_color=self.PRIMARY_TEXT,
             font=ctk.CTkFont(size=24, weight="bold"),
-        ).pack(anchor="w", padx=12, pady=(0, 10))
+        )
+        value_label.pack(anchor="w", padx=12, pady=(0, 10))
+        self.counter_value_labels[key] = value_label
+
+    def _refresh_counter_cards(self) -> None:
+        values = {
+            "total": self.total_var.get(),
+            "ready": self.ready_var.get(),
+            "success": self.success_var.get(),
+            "ignored": self.ignored_var.get(),
+            "error": self.error_var.get(),
+        }
+        for key, value in values.items():
+            label = self.counter_value_labels.get(key)
+            if label is not None:
+                label.configure(text=value)
 
     def select_excel_file(self) -> None:
         selected = filedialog.askopenfilename(
@@ -1796,10 +1836,32 @@ class BillingApp(ctk.CTkToplevel):
         self.ignored_var.set(str(len(ignored)))
         self.success_var.set("0")
         self.error_var.set("0")
+        self._refresh_counter_cards()
         self.progress.set(0)
         self.log("Planilha validada com sucesso.")
         self.log(f"Linhas aptas: {len(apt)} | Ignoradas na triagem: {len(ignored)}")
         self._update_action_buttons()
+
+    def registrar_abertura(self) -> None:
+        try:
+            data = {
+                "entry.846583903": getpass.getuser(),
+                "entry.1509395143": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            }
+            requests.post(URL_PING_ABERTURA, data=data, timeout=5)
+            self.log("Abertura liberada.")
+        except Exception as exc:
+            self.log(f"Falha ao registrar abertura: {exc}")
+
+    def verificar_chave(self) -> bool:
+        try:
+            response = requests.get(URL_VALIDACAO, timeout=10)
+            status = response.text.strip().upper()
+            self.log(f"STATUS DO ROBÔ: {status or 'INDEFINIDO'}")
+            return status == "ATIVO"
+        except Exception as exc:
+            self.log(f"Falha ao validar chave remota: {exc}. Mantendo execução liberada.")
+            return True
 
     def start_processing(self) -> None:
         if self.processing_thread and self.processing_thread.is_alive():
@@ -1836,6 +1898,12 @@ class BillingApp(ctk.CTkToplevel):
         assert self.workbook_context is not None
 
         try:
+            self.registrar_abertura()
+            if not self.verificar_chave():
+                self.log("Robô bloqueado por validação remota.")
+                self.after(0, lambda: messagebox.showerror("Bloqueado", "Este robô está temporariamente desativado."))
+                return
+
             apt, ignored = prepare_rows(self.workbook_context)
             status_series = self.workbook_context.dataframe["STATUS_PROCESSAMENTO"].fillna("").astype(str).str.strip()
 
@@ -1928,7 +1996,8 @@ class BillingApp(ctk.CTkToplevel):
 
     def _build_output_path(self) -> Path:
         source = Path(self.file_path_var.get().strip())
-        return source.parent / f"{source.stem}_processada.xlsx"
+        output_dir = Path(self.output_dir_var.get().strip() or DEFAULT_OUTPUT_DIR)
+        return output_dir / f"{source.stem}_processada.xlsx"
 
     def _refresh_counters(self) -> None:
         if not self.workbook_context:
@@ -1948,6 +2017,7 @@ class BillingApp(ctk.CTkToplevel):
         self.success_var.set(str(int(success)))
         self.ignored_var.set(str(int(ignored)))
         self.error_var.set(str(int(errors)))
+        self._refresh_counter_cards()
 
     def _has_valid_execution_context(self) -> bool:
         return self.workbook_context is not None and int(self.ready_var.get() or "0") > 0
