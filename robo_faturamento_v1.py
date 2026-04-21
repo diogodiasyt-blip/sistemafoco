@@ -13,8 +13,6 @@ APP_GEOMETRY = "1180x760"
 SAVE_DATE_FORMAT = "%d/%m/%Y %H:%M:%S"
 
 DEFAULT_PROTHEUS_URL = "https://focoaluguel162907.protheus.cloudtotvs.com.br:1453/webapp/"
-DEFAULT_OUTPUT_DIR = Path.cwd() / "saida"
-
 EXCEL_REQUIRED_COLUMNS = [
     "CLIENTE",
     "MODALIDADE",
@@ -1483,7 +1481,6 @@ class BillingApp(ctk.CTk):
         self.username_var = ctk.StringVar()
         self.password_var = ctk.StringVar()
         self.file_path_var = ctk.StringVar()
-        self.output_dir_var = ctk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
         self.headless_var = ctk.BooleanVar(value=False)
 
         self.total_var = ctk.StringVar(value="0")
@@ -1622,7 +1619,7 @@ class BillingApp(ctk.CTk):
         self._entry(grid, self.password_var, show="*").grid(row=1, column=1, sticky="ew", padx=(10, 0))
 
     def _build_plan_section(self, parent: ctk.CTkScrollableFrame) -> None:
-        plan = self._create_section(parent, 2, "Planilha e Destino")
+        plan = self._create_section(parent, 2, "Planilha")
         grid = ctk.CTkFrame(plan, fg_color="transparent")
         grid.pack(fill="x", padx=18, pady=(0, 18))
         grid.grid_columnconfigure(0, weight=1)
@@ -1630,9 +1627,6 @@ class BillingApp(ctk.CTk):
         self._form_label(grid, "Planilha").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self._entry(grid, self.file_path_var).grid(row=1, column=0, sticky="ew", padx=(0, 10), pady=(0, 10))
         self._secondary_button(grid, "Selecionar", self.select_excel_file, width=150).grid(row=1, column=1, sticky="e", pady=(0, 10))
-
-        self._form_label(grid, "Saida").grid(row=2, column=0, sticky="w", pady=(0, 6))
-        self._entry(grid, self.output_dir_var).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
 
         ctk.CTkCheckBox(
             grid,
@@ -1642,7 +1636,7 @@ class BillingApp(ctk.CTk):
             fg_color=self.BUTTON_BG,
             hover_color=self.BUTTON_ACTIVE_BG,
             border_color="#d9c9c3",
-        ).grid(row=4, column=0, sticky="w")
+        ).grid(row=2, column=0, sticky="w")
 
     def _build_indicator_section(self, parent: ctk.CTkScrollableFrame) -> None:
         indicators = self._create_section(parent, 3, "Indicadores")
@@ -1996,8 +1990,9 @@ class BillingApp(ctk.CTk):
 
     def _build_output_path(self) -> Path:
         source = Path(self.file_path_var.get().strip())
-        output_dir = Path(self.output_dir_var.get().strip() or DEFAULT_OUTPUT_DIR)
-        return output_dir / f"{source.stem}_processada.xlsx"
+        if not str(source).strip():
+            return Path.cwd() / "planilha_processada.xlsx"
+        return source.parent / f"{source.stem}_processada.xlsx"
 
     def _refresh_counters(self) -> None:
         if not self.workbook_context:
