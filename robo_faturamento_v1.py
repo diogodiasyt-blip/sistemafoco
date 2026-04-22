@@ -1870,6 +1870,7 @@ class BillingApp(ctk.CTk):
         self.stop_requested.clear()
         self.is_paused = False
         self.is_processing = True
+        self.log("Thread de processamento iniciada.")
         self.processing_thread = threading.Thread(target=self._run_processing, daemon=True)
         self.processing_thread.start()
         self._update_action_buttons()
@@ -1898,7 +1899,9 @@ class BillingApp(ctk.CTk):
                 self.after(0, lambda: messagebox.showerror("Bloqueado", "Este robô está temporariamente desativado."))
                 return
 
+            self.log("Iniciando triagem das linhas aptas...")
             apt, ignored = prepare_rows(self.workbook_context)
+            self.log(f"Triagem concluída. Aptas: {len(apt)} | Ignoradas: {len(ignored)}")
             status_series = self.workbook_context.dataframe["STATUS_PROCESSAMENTO"].fillna("").astype(str).str.strip()
 
             for row_index in ignored.index:
@@ -1918,6 +1921,7 @@ class BillingApp(ctk.CTk):
                 return
 
             if self.bot_instance is None:
+                self.log("Preparando instância do bot Protheus...")
                 self.bot_instance = ProtheusBot(
                     username=self.username_var.get().strip(),
                     password=self.password_var.get().strip(),
@@ -1926,10 +1930,14 @@ class BillingApp(ctk.CTk):
                 )
 
             if not self.session_ready:
+                self.log("Inicializando navegador e sessão do Protheus...")
                 self.bot_instance.start()
+                self.log("Sessão iniciada. Executando login...")
                 self.bot_instance.login()
+                self.log("Login concluído. Navegando para faturamento...")
                 self.bot_instance.navigate_to_faturamento()
                 self.session_ready = True
+                self.log("Tela de faturamento pronta para processamento.")
 
             total = len(pending)
             for position, (row_index, row) in enumerate(pending.iterrows(), start=1):
@@ -1970,7 +1978,10 @@ class BillingApp(ctk.CTk):
                 self.log(f"Processamento finalizado. Arquivo salvo em: {self._build_output_path()}")
         except Exception as exc:
             print(f"[FATURAMENTO][ERRO_THREAD] {exc}", file=sys.stderr)
-            self.after(0, lambda: self.log(f"Erro fatal no processamento: {exc}"))
+            try:
+                self.log(f"Erro fatal no processamento: {exc}")
+            except Exception:
+                pass
         finally:
             self.is_processing = False
             self.is_paused = self.pause_requested.is_set() and not self.stop_requested.is_set()
