@@ -1962,12 +1962,15 @@ class BillingApp(ctk.CTk):
                     mark_row(self.workbook_context, row_index, "ERRO_AUTOMACAO", str(exc))
                     self.log(f"Erro na linha {row_index}: {exc}")
 
-                self.progress.set(position / total)
+                self._set_progress(position / total)
                 save_workbook(self.workbook_context, self._build_output_path())
                 self._refresh_counters()
 
             if not self.pause_requested.is_set() and not self.stop_requested.is_set():
                 self.log(f"Processamento finalizado. Arquivo salvo em: {self._build_output_path()}")
+        except Exception as exc:
+            print(f"[FATURAMENTO][ERRO_THREAD] {exc}", file=sys.stderr)
+            self.after(0, lambda: self.log(f"Erro fatal no processamento: {exc}"))
         finally:
             self.is_processing = False
             self.is_paused = self.pause_requested.is_set() and not self.stop_requested.is_set()
@@ -1985,8 +1988,8 @@ class BillingApp(ctk.CTk):
 
             self.pause_requested.clear()
             self.stop_requested.clear()
-            self._refresh_counters()
-            self._update_action_buttons()
+            self.after(0, self._refresh_counters)
+            self.after(0, self._update_action_buttons)
 
     def _build_output_path(self) -> Path:
         source = Path(self.file_path_var.get().strip())
@@ -1995,6 +1998,10 @@ class BillingApp(ctk.CTk):
         return source.parent / f"{source.stem}_processada.xlsx"
 
     def _refresh_counters(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            self.after(0, self._refresh_counters)
+            return
+
         if not self.workbook_context:
             return
 
@@ -2013,6 +2020,13 @@ class BillingApp(ctk.CTk):
         self.ignored_var.set(str(int(ignored)))
         self.error_var.set(str(int(errors)))
         self._refresh_counter_cards()
+
+    def _set_progress(self, value: float) -> None:
+        value = max(0.0, min(1.0, float(value)))
+        if threading.current_thread() is threading.main_thread():
+            self.progress.set(value)
+        else:
+            self.after(0, lambda v=value: self.progress.set(v))
 
     def _has_valid_execution_context(self) -> bool:
         return self.workbook_context is not None and int(self.ready_var.get() or "0") > 0
