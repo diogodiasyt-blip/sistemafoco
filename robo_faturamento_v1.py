@@ -1429,6 +1429,7 @@ class ProtheusBot:
 
 # ===== main.py =====
 import getpass
+import queue
 import threading
 from pathlib import Path
 import tkinter as tk
@@ -1470,6 +1471,7 @@ class BillingApp(ctk.CTk):
         self.workbook_context: WorkbookContext | None = None
         self.processing_thread: threading.Thread | None = None
         self.bot_instance: ProtheusBot | None = None
+        self.ui_queue: queue.Queue = queue.Queue()
         self.logo_image = None
         self.logo_label = None
         self.pause_requested = threading.Event()
@@ -1497,6 +1499,7 @@ class BillingApp(ctk.CTk):
 
         self._build_layout()
         self._update_action_buttons()
+        self.after(100, self._process_ui_queue)
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -1896,7 +1899,7 @@ class BillingApp(ctk.CTk):
             self.registrar_abertura()
             if not self.verificar_chave():
                 self.log("Robô bloqueado por validação remota.")
-                self.after(0, lambda: messagebox.showerror("Bloqueado", "Este robô está temporariamente desativado."))
+                self._post_ui(messagebox.showerror, "Bloqueado", "Este robô está temporariamente desativado.")
                 return
 
             self.log("Iniciando triagem das linhas aptas...")
@@ -1999,8 +2002,8 @@ class BillingApp(ctk.CTk):
 
             self.pause_requested.clear()
             self.stop_requested.clear()
-            self.after(0, self._refresh_counters)
-            self.after(0, self._update_action_buttons)
+            self._post_ui(self._refresh_counters)
+            self._post_ui(self._update_action_buttons)
 
     def _build_output_path(self) -> Path:
         source = Path(self.file_path_var.get().strip())
@@ -2010,7 +2013,7 @@ class BillingApp(ctk.CTk):
 
     def _refresh_counters(self) -> None:
         if threading.current_thread() is not threading.main_thread():
-            self.after(0, self._refresh_counters)
+            self._post_ui(self._refresh_counters)
             return
 
         if not self.workbook_context:
@@ -2037,7 +2040,7 @@ class BillingApp(ctk.CTk):
         if threading.current_thread() is threading.main_thread():
             self.progress.set(value)
         else:
-            self.after(0, lambda v=value: self.progress.set(v))
+            self._post_ui(self.progress.set, value)
 
     def _has_valid_execution_context(self) -> bool:
         return self.workbook_context is not None and int(self.ready_var.get() or "0") > 0
@@ -2059,11 +2062,26 @@ class BillingApp(ctk.CTk):
         if threading.current_thread() is threading.main_thread():
             self._append_log(message)
         else:
-            self.after(0, lambda msg=message: self._append_log(msg))
+            self._post_ui(self._append_log, message)
 
     def _append_log(self, message: str) -> None:
         self.log_box.insert("end", f"{message}\n")
         self.log_box.see("end")
+
+    def _post_ui(self, callback, *args, **kwargs) -> None:
+        self.ui_queue.put((callback, args, kwargs))
+
+    def _process_ui_queue(self) -> None:
+        try:
+            while True:
+                callback, args, kwargs = self.ui_queue.get_nowait()
+                try:
+                    callback(*args, **kwargs)
+                except Exception as exc:
+                    print(f"[FATURAMENTO][ERRO_UI] {exc}", file=sys.stderr)
+        except queue.Empty:
+            pass
+        self.after(100, self._process_ui_queue)
 
 
 if __name__ == "__main__":
