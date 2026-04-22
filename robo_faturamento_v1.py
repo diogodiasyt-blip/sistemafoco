@@ -2056,6 +2056,12 @@ class BillingApp(ctk.CTk):
         self.stop_button.configure(state="normal" if is_running and not self.stop_requested.is_set() else "disabled")
 
     def log(self, message: str) -> None:
+        if threading.current_thread() is threading.main_thread():
+            self._append_log(message)
+        else:
+            self.after(0, lambda msg=message: self._append_log(msg))
+
+    def _append_log(self, message: str) -> None:
         self.log_box.insert("end", f"{message}\n")
         self.log_box.see("end")
 
