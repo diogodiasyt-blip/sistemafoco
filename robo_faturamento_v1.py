@@ -5,6 +5,7 @@ from __future__ import annotations
 
 # ===== config.py =====
 import os
+import shutil
 from pathlib import Path
 
 
@@ -421,6 +422,34 @@ class ProtheusBot:
         self.context: BrowserContext | None = None
         self.page: Page | None = None
 
+    def _resolve_browser_executable(self) -> str | None:
+        env_candidates = [
+            os.environ.get("FOCO_BROWSER_EXECUTABLE", "").strip(),
+            os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE", "").strip(),
+        ]
+        for candidate in env_candidates:
+            if candidate and os.path.exists(candidate):
+                return candidate
+
+        common_paths = [
+            os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Edge", "Application", "msedge.exe"),
+        ]
+        for candidate in common_paths:
+            if candidate and os.path.exists(candidate):
+                return candidate
+
+        for command in ("chrome.exe", "chrome", "msedge.exe", "msedge"):
+            resolved = shutil.which(command)
+            if resolved:
+                return resolved
+
+        return None
+
     def start(self) -> None:
         if self.page:
             return
@@ -429,10 +458,41 @@ class ProtheusBot:
 
         self.log("Inicializando automacao do Protheus.")
         self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(
-            headless=self.headless,
-            args=["--start-maximized"],
-        )
+        launch_options = {
+            "headless": self.headless,
+            "args": ["--start-maximized"],
+        }
+        launch_errors: list[str] = []
+
+        browser_executable = self._resolve_browser_executable()
+        if browser_executable:
+            try:
+                self.log(f"Usando navegador local: {browser_executable}")
+                self.browser = self.playwright.chromium.launch(
+                    executable_path=browser_executable,
+                    **launch_options,
+                )
+            except Exception as exc:
+                launch_errors.append(f"executavel local: {exc}")
+                self.log(f"Falha ao iniciar navegador local. Tentando fallback Playwright: {exc}")
+
+        if self.browser is None:
+            try:
+                self.log("Tentando navegador padrao do Playwright.")
+                self.browser = self.playwright.chromium.launch(**launch_options)
+            except Exception as exc:
+                launch_errors.append(f"playwright chromium: {exc}")
+
+        if self.browser is None:
+            if self.playwright:
+                try:
+                    self.playwright.stop()
+                except Exception:
+                    pass
+                self.playwright = None
+            details = " | ".join(launch_errors) if launch_errors else "nenhum navegador disponivel"
+            raise RuntimeError(f"Nao foi possivel iniciar o navegador do faturamento: {details}")
+
         self.context = self.browser.new_context(viewport=None)
         self.page = self.context.new_page()
 
