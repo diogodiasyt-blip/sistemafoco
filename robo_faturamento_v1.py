@@ -665,12 +665,19 @@ class ProtheusBot:
 
         found_name = self._read_locator_text(first_result)
         self.log(f"Primeiro nome retornado na busca: {found_name or '(vazio)'}")
+        found_cpf = self._read_lookup_row_document(dialog)
+        if found_cpf:
+            self.log(f"CPF/CNPJ retornado na busca: {found_cpf}")
 
         expected_name_normalized = self._normalize_text(expected_client_name)
         found_name_normalized = self._normalize_text(found_name)
-        if not self._names_match(expected_name_normalized, found_name_normalized):
+        cpf_matches = self._lookup_document_matches(cpf, found_cpf)
+        name_matches = self._names_match(expected_name_normalized, found_name_normalized)
+        if not (cpf_matches or name_matches):
             self.log(
-                f"Cliente retornado nao confere. Esperado: {expected_client_name} | Encontrado: {found_name or '(vazio)'}"
+                "Cliente retornado nao confere. "
+                f"Esperado nome: {expected_client_name} | Encontrado nome: {found_name or '(vazio)'} | "
+                f"Esperado CPF: {cpf} | Encontrado CPF/CNPJ: {found_cpf or '(vazio)'}"
             )
             try:
                 cancel_button = self._first_visible_locator(
@@ -724,6 +731,23 @@ class ProtheusBot:
         page.wait_for_timeout(350)
         page.keyboard.press("Tab")
         page.wait_for_timeout(500)
+
+    def _read_lookup_row_document(self, dialog) -> str:
+        candidates = [
+            dialog.locator('td[id="1"] label').first,
+            dialog.locator("tbody tr td:nth-child(1) label").first,
+            dialog.locator("tbody tr td:nth-child(1)").first,
+            dialog.locator('div').filter(has_text="/").nth(1),
+        ]
+        locator = self._first_visible_locator(candidates)
+        return self._read_locator_text(locator)
+
+    def _lookup_document_matches(self, expected_cpf: str, found_document: str) -> bool:
+        expected_digits = self._normalize_document(expected_cpf)
+        found_digits = self._normalize_document(found_document)
+        if not expected_digits or not found_digits:
+            return False
+        return found_digits.endswith(expected_digits[-3:]) or found_digits == expected_digits
 
     def fill_billing_fields(self, row: dict) -> str:
         page = self._require_page()
