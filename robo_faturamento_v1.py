@@ -403,6 +403,13 @@ MOTIVE_CODE_GROUPS = {
 
 
 class ProtheusBot:
+    HELP_FIELD_PATTERNS = {
+        "tipo": ("E1_TIPO",),
+        "natureza": ("E1_NATUREZ",),
+        "centro_custo": ("NOCUSTO", "E1_CCUSTO"),
+        "segregacao": ("REGNOIS", "E1_XSEGREG"),
+    }
+
     def __init__(
         self,
         username: str,
@@ -1314,8 +1321,15 @@ class ProtheusBot:
                 self._fill_host_input(locator, expected, dismiss_popup=False)
 
             page.wait_for_timeout(1500)
-            if self._dismiss_help_popup_if_present():
-                self.log(f"Erro do TOTVS detectado apos preencher campo. Tentando novamente ({attempt}/{attempts}).")
+            error_field = self._dismiss_help_popup_if_present()
+            if error_field:
+                if field_key and error_field != "desconhecido" and error_field != field_key:
+                    label = FIELD_MAP.get(error_field, {}).get("label", error_field)
+                    raise RuntimeError(
+                        f"TOTVS apontou erro no campo {label} enquanto o robo validava {FIELD_MAP.get(field_key, {}).get('label', field_key)}. "
+                        "A linha sera reiniciada para evitar preenchimento cruzado."
+                    )
+                self.log(f"Erro do TOTVS detectado no campo {error_field}. Tentando novamente ({attempt}/{attempts}).")
                 continue
 
             last_value = self._read_from_locator(locator)
@@ -1453,14 +1467,23 @@ class ProtheusBot:
         self._dismiss_help_popup_if_present()
         page.wait_for_timeout(250)
 
-    def _dismiss_help_popup_if_present(self) -> bool:
+    def _identify_help_field(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        for field_key, patterns in self.HELP_FIELD_PATTERNS.items():
+            for pattern in patterns:
+                if self._normalize_text(pattern) in normalized:
+                    return field_key
+        return "desconhecido"
+
+    def _dismiss_help_popup_if_present(self) -> str | None:
         page = self._require_page()
         try:
             help_dialog = page.locator("wa-dialog.dict-msdialog").filter(
                 has=page.get_by_text("Problema:", exact=False)
             ).last
             if help_dialog.count() == 0 or not help_dialog.is_visible():
-                return False
+                return None
+            field_key = self._identify_help_field(help_dialog.inner_text() or "")
 
             close_button = self._first_visible_locator(
                 [
@@ -1471,10 +1494,10 @@ class ProtheusBot:
             if close_button is not None:
                 close_button.click(force=True)
                 page.wait_for_timeout(700)
-                return True
+                return field_key
         except Exception:
-            return False
-        return False
+            return None
+        return None
 
     def _raise_if_totvs_error_present(self) -> None:
         page = self._require_page()
