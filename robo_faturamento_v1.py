@@ -396,7 +396,7 @@ SPECIAL_NATURE_MOTIVES = {
 
 MOTIVE_CODE_GROUPS = {
     "1": {"AVARIA/SINISTRO"},
-    "2": {"DIARIAS", "DIARIAS E ITENS EXTRAS", "ITENS EXTRAS", "EXTRACONTRATUAL"},
+    "2": {"DIARIAS", "DIARIAS E ITENS EXTRAS", "ITENS EXTRAS", "EXTRACONTRATUAL", "MULTA CONTRATUAL"},
     "3": {"BUSCA/ RECUPERACAO", "BUSCA/ RECUPERAÇÃO", "APROPRIACAO", "APROPRIAÇÃO", "APREENSAO AUTORIDADES", "APREENSÃO AUTORIDADES"},
     "4": {"ASSISTENCIA 24 H", "ASSISTÊNCIA 24 H"},
 }
@@ -665,7 +665,7 @@ class ProtheusBot:
 
         found_name = self._read_locator_text(first_result)
         self.log(f"Primeiro nome retornado na busca: {found_name or '(vazio)'}")
-        found_cpf = self._read_lookup_row_document(first_result)
+        found_cpf = self._read_lookup_row_document(dialog, first_result, cpf)
         if found_cpf:
             self.log(f"CPF/CNPJ retornado na busca: {found_cpf}")
 
@@ -732,7 +732,7 @@ class ProtheusBot:
         page.keyboard.press("Tab")
         page.wait_for_timeout(500)
 
-    def _read_lookup_row_document(self, name_locator) -> str:
+    def _read_lookup_row_document(self, dialog, name_locator, expected_cpf: str) -> str:
         if name_locator is None:
             return ""
         try:
@@ -757,15 +757,46 @@ class ProtheusBot:
                 }
                 """
             )
-            return str(value or "").strip()
+            text = str(value or "").strip()
+            if text:
+                return text
         except Exception:
-            return ""
+            pass
+
+        suffix = self._normalize_document(expected_cpf)[-3:]
+        if suffix:
+            try:
+                locator = self._first_visible_locator(
+                    [
+                        dialog.locator("div").filter(has_text=f"/{suffix} -").nth(1),
+                        dialog.locator("div").filter(has_text=f"/{suffix}").first,
+                        dialog.locator("label").filter(has_text=f"/{suffix} -").first,
+                        dialog.locator("td").filter(has_text=f"/{suffix} -").first,
+                    ]
+                )
+                text = self._read_locator_text(locator)
+                if text:
+                    return text
+            except Exception:
+                pass
+
+            try:
+                dialog_text = self._normalize_text(dialog.inner_text() or "")
+                marker = f"/{suffix}"
+                if marker in dialog_text:
+                    return marker
+            except Exception:
+                pass
+
+        return ""
 
     def _lookup_document_matches(self, expected_cpf: str, found_document: str) -> bool:
         expected_digits = self._normalize_document(expected_cpf)
         found_digits = self._normalize_document(found_document)
         if not expected_digits or not found_digits:
-            return False
+            expected_suffix = expected_digits[-3:] if expected_digits else ""
+            found_text = self._normalize_text(found_document)
+            return bool(expected_suffix and f"/{expected_suffix}" in found_text)
         return found_digits.endswith(expected_digits[-3:]) or found_digits == expected_digits
 
     def fill_billing_fields(self, row: dict) -> str:
