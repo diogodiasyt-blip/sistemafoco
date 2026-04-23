@@ -748,8 +748,19 @@ class ProtheusBot:
             [dialog.get_by_title("Motivo                   ").get_by_role("combobox")]
         )
         historico_input = self._first_visible_locator([dialog.locator("#COMP6040 > input")])
+        field_locators = {
+            "prefixo": prefixo_input,
+            "tipo": tipo_input,
+            "natureza": natureza_input,
+            "contrato": contrato_input,
+            "vencimento": vencimento_input,
+            "valor_titulo": valor_input,
+            "centro_custo": loja_input,
+            "segregacao": segregacao_input,
+            "historico": historico_input,
+        }
 
-        self._click_and_fill_field(prefixo_input, payload["prefixo"])
+        self._click_and_fill_field(prefixo_input, payload["prefixo"], "prefixo")
         self._settle_after_field()
 
         invoice_number = self._read_from_locator(numero_titulo_input)
@@ -757,36 +768,42 @@ class ProtheusBot:
         self._select_combo_option(tipo_pg_combo, payload["tipo_pg"])
         self._settle_after_field()
 
-        self._click_and_fill_field(tipo_input, payload["tipo"])
+        self._click_and_fill_field(tipo_input, payload["tipo"], "tipo")
         self._settle_after_field()
-        self._click_and_fill_field(natureza_input, payload["natureza"])
+        self._click_and_fill_field(natureza_input, payload["natureza"], "natureza")
         self._settle_after_field()
-        self._click_and_fill_field(contrato_input, payload["contrato"])
+        self._click_and_fill_field(contrato_input, payload["contrato"], "contrato")
         self._settle_after_field()
-        self._click_and_fill_field(vencimento_input, payload["vencimento"])
+        self._click_and_fill_field(vencimento_input, payload["vencimento"], "vencimento")
         self._settle_after_field()
-        self._click_and_fill_field(valor_input, payload["valor_titulo"])
+        self._click_and_fill_field(valor_input, payload["valor_titulo"], "valor_titulo")
         self._settle_after_field()
-        self._click_and_fill_field(loja_input, payload["centro_custo"])
+        self._click_and_fill_field(loja_input, payload["centro_custo"], "centro_custo")
         self._settle_after_field()
 
         self._select_combo_option(negocio_combo, payload["negocio"])
         self._settle_after_field()
 
-        self._click_and_fill_field(segregacao_input, payload["segregacao"])
+        self._click_and_fill_field(segregacao_input, payload["segregacao"], "segregacao")
         self._settle_after_field()
 
         self._select_combo_option(motivo_combo, payload["motivo"])
         self._settle_after_field()
 
-        self._click_and_fill_field(historico_input, payload["historico"])
+        self._click_and_fill_field(historico_input, payload["historico"], "historico")
         self._settle_after_field()
 
         if not invoice_number:
             page.wait_for_timeout(600)
             invoice_number = self._read_from_locator(numero_titulo_input)
 
+        self._validate_filled_fields(field_locators, payload)
         self._complete_save_flow(dialog)
+        if not invoice_number:
+            page.wait_for_timeout(600)
+            invoice_number = self._read_from_locator(numero_titulo_input)
+        if not invoice_number:
+            raise RuntimeError("Numero do titulo nao foi capturado. O contrato nao sera marcado como faturado.")
         if invoice_number:
             self.log(f"Numero do titulo capturado: {invoice_number}")
         return invoice_number
@@ -1269,7 +1286,78 @@ class ProtheusBot:
         self._require_page().keyboard.press("Enter")
         self._require_page().wait_for_timeout(300)
 
-    def _fill_host_input(self, locator, value: str) -> None:
+    def _click_and_fill_field(self, locator, value: str, field_key: str | None = None, attempts: int = 3) -> None:
+        if locator is None:
+            raise RuntimeError("Campo de entrada nao foi localizado.")
+
+        page = self._require_page()
+        expected = str(value)
+        last_value = ""
+        for attempt in range(1, attempts + 1):
+            locator.wait_for(state="visible", timeout=45000)
+            locator.scroll_into_view_if_needed(timeout=3000)
+            focused = self._focus_host_input(locator)
+            if not focused:
+                locator.click(force=True)
+            page.wait_for_timeout(250)
+
+            try:
+                if not focused:
+                    page.keyboard.press("Control+A")
+                    page.wait_for_timeout(100)
+                    page.keyboard.press("Backspace")
+                    page.wait_for_timeout(100)
+                    page.keyboard.type(expected, delay=120)
+                else:
+                    self._fill_host_input(locator, expected, dismiss_popup=False)
+            except Exception:
+                self._fill_host_input(locator, expected, dismiss_popup=False)
+
+            page.wait_for_timeout(1500)
+            if self._dismiss_help_popup_if_present():
+                self.log(f"Erro do TOTVS detectado apos preencher campo. Tentando novamente ({attempt}/{attempts}).")
+                continue
+
+            last_value = self._read_from_locator(locator)
+            if field_key is None:
+                if last_value.strip():
+                    return
+            elif self._field_value_matches(field_key, expected, last_value):
+                return
+
+            self.log(
+                f"Validacao do campo falhou ({attempt}/{attempts}). "
+                f"Esperado: '{expected}' | Lido: '{last_value}'"
+            )
+
+        label = FIELD_MAP.get(field_key or "", {}).get("label", field_key or "campo")
+        raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
+
+    def _focus_host_input(self, locator) -> bool:
+        try:
+            locator.click(force=True)
+            return bool(
+                locator.evaluate(
+                    """
+                    (host) => {
+                        const root = host.shadowRoot || host;
+                        const input =
+                            root.querySelector('input') ||
+                            root.querySelector('textarea') ||
+                            host.querySelector('input') ||
+                            host.querySelector('textarea');
+                        if (!input) return false;
+                        input.focus();
+                        const active = root.activeElement || document.activeElement;
+                        return active === input || document.activeElement === host || document.activeElement === input;
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
+
+    def _fill_host_input(self, locator, value: str, dismiss_popup: bool = True) -> None:
         if locator is None:
             raise RuntimeError("Campo de entrada nao foi localizado.")
         page = self._require_page()
@@ -1312,9 +1400,10 @@ class ProtheusBot:
             page.keyboard.type(str(value), delay=110)
 
         page.wait_for_timeout(700)
-        self._dismiss_help_popup_if_present()
+        if dismiss_popup:
+            self._dismiss_help_popup_if_present()
 
-    def _click_and_fill_field(self, locator, value: str) -> None:
+    def _legacy_click_and_fill_field(self, locator, value: str) -> None:
         if locator is None:
             raise RuntimeError("Campo de entrada nao foi localizado.")
 
@@ -1364,14 +1453,14 @@ class ProtheusBot:
         self._dismiss_help_popup_if_present()
         page.wait_for_timeout(250)
 
-    def _dismiss_help_popup_if_present(self) -> None:
+    def _dismiss_help_popup_if_present(self) -> bool:
         page = self._require_page()
         try:
             help_dialog = page.locator("wa-dialog.dict-msdialog").filter(
                 has=page.get_by_text("Problema:", exact=False)
             ).last
             if help_dialog.count() == 0 or not help_dialog.is_visible():
-                return
+                return False
 
             close_button = self._first_visible_locator(
                 [
@@ -1382,8 +1471,32 @@ class ProtheusBot:
             if close_button is not None:
                 close_button.click(force=True)
                 page.wait_for_timeout(700)
+                return True
         except Exception:
-            pass
+            return False
+        return False
+
+    def _raise_if_totvs_error_present(self) -> None:
+        page = self._require_page()
+        try:
+            dialogs = page.locator("wa-dialog.dict-msdialog")
+            count = dialogs.count()
+        except Exception:
+            return
+
+        error_markers = ("PROBLEMA:", "ERRO", "ERROR", "INCONSIST", "ATENCAO", "ATENÇÃO")
+        for index in range(count):
+            try:
+                dialog = dialogs.nth(index)
+                if not dialog.is_visible():
+                    continue
+                text = self._normalize_text(dialog.inner_text() or "")
+                if any(marker in text for marker in error_markers):
+                    raise RuntimeError(f"TOTVS apresentou erro antes de concluir o salvamento: {text[:350]}")
+            except RuntimeError:
+                raise
+            except Exception:
+                continue
 
     def _complete_save_flow(self, dialog) -> None:
         page = self._require_page()
@@ -1399,6 +1512,7 @@ class ProtheusBot:
 
         self._click_first_visible_locator([first_save], timeout=45000, pause_ms=700)
         page.wait_for_timeout(1200)
+        self._raise_if_totvs_error_present()
 
         second_save_candidates = [
             page.get_by_role("button", name="Salvar"),
@@ -1409,6 +1523,7 @@ class ProtheusBot:
             raise RuntimeError("Segundo botao Salvar da confirmacao contabil nao apareceu.")
         self._click_first_visible_locator([second_save], timeout=20000, pause_ms=700)
         page.wait_for_timeout(1500)
+        self._raise_if_totvs_error_present()
 
         close_candidates = [
             page.get_by_role("button", name="Fechar"),
@@ -1426,6 +1541,52 @@ class ProtheusBot:
                 break
 
         self.wait_until_faturamento_screen()
+
+    def _validate_filled_fields(self, field_locators: dict, payload: dict) -> None:
+        errors = []
+        for field_key, locator in field_locators.items():
+            expected = str(payload.get(field_key, "")).strip()
+            if not expected:
+                continue
+            actual = self._read_from_locator(locator)
+            if not self._field_value_matches(field_key, expected, actual):
+                label = FIELD_MAP.get(field_key, {}).get("label", field_key)
+                errors.append(f"{label}: esperado '{expected}', encontrado '{actual}'")
+
+        if errors:
+            details = "; ".join(errors[:6])
+            raise RuntimeError(f"Validacao de preenchimento falhou. O lancamento nao sera salvo. {details}")
+
+        self.log("Validacao dos campos preenchidos concluida com sucesso.")
+
+    def _field_value_matches(self, field_key: str, expected: str, actual: str) -> bool:
+        expected = str(expected).strip()
+        actual = str(actual).strip()
+        if field_key == "valor_titulo":
+            expected_value = self._parse_money_for_compare(expected)
+            actual_value = self._parse_money_for_compare(actual)
+            return expected_value is not None and actual_value is not None and abs(expected_value - actual_value) < 0.01
+        if field_key == "vencimento":
+            return self._normalize_document(expected) == self._normalize_document(actual)
+
+        expected_norm = self._normalize_text(expected)
+        actual_norm = self._normalize_text(actual)
+        return actual_norm == expected_norm or actual_norm.startswith(expected_norm)
+
+    @staticmethod
+    def _parse_money_for_compare(value: str) -> float | None:
+        text = str(value).strip()
+        if not text:
+            return None
+        text = text.replace("R$", "").replace(" ", "")
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            return float(text)
+        except Exception:
+            return None
 
     def _read_from_locator(self, locator) -> str:
         if locator is None:
