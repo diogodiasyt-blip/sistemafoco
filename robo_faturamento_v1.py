@@ -665,7 +665,7 @@ class ProtheusBot:
 
         found_name = self._read_locator_text(first_result)
         self.log(f"Primeiro nome retornado na busca: {found_name or '(vazio)'}")
-        found_cpf = self._read_lookup_row_document(dialog)
+        found_cpf = self._read_lookup_row_document(first_result)
         if found_cpf:
             self.log(f"CPF/CNPJ retornado na busca: {found_cpf}")
 
@@ -732,15 +732,34 @@ class ProtheusBot:
         page.keyboard.press("Tab")
         page.wait_for_timeout(500)
 
-    def _read_lookup_row_document(self, dialog) -> str:
-        candidates = [
-            dialog.locator('td[id="1"] label').first,
-            dialog.locator("tbody tr td:nth-child(1) label").first,
-            dialog.locator("tbody tr td:nth-child(1)").first,
-            dialog.locator('div').filter(has_text="/").nth(1),
-        ]
-        locator = self._first_visible_locator(candidates)
-        return self._read_locator_text(locator)
+    def _read_lookup_row_document(self, name_locator) -> str:
+        if name_locator is None:
+            return ""
+        try:
+            value = name_locator.evaluate(
+                """
+                (node) => {
+                    const label = node;
+                    const cell =
+                        label.closest('td') ||
+                        label.parentElement;
+                    if (!cell) return '';
+                    const row =
+                        cell.closest('tr') ||
+                        cell.parentElement;
+                    if (!row) return '';
+                    const docCell =
+                        row.querySelector('td[id="1"] label') ||
+                        row.querySelector('td[id="1"]') ||
+                        row.querySelector('td:nth-child(1) label') ||
+                        row.querySelector('td:nth-child(1)');
+                    return docCell ? (docCell.textContent || '').trim() : '';
+                }
+                """
+            )
+            return str(value or "").strip()
+        except Exception:
+            return ""
 
     def _lookup_document_matches(self, expected_cpf: str, found_document: str) -> bool:
         expected_digits = self._normalize_document(expected_cpf)
@@ -1271,10 +1290,17 @@ class ProtheusBot:
             "valor_titulo": self._format_currency_value(row.get("VALOR")),
             "centro_custo": str(row.get("LOJA", "")).strip(),
             "negocio": "1" if modalidade_norm == "RAC" else "2",
-            "segregacao": modalidade,
+            "segregacao": self._resolve_segregacao_value(modalidade),
             "motivo": self._resolve_motivo_codigo(motivo),
             "historico": str(row.get("HISTORICO", "")).strip(),
         }
+
+    def _resolve_segregacao_value(self, modalidade: str) -> str:
+        modalidade_text = str(modalidade).strip()
+        modalidade_norm = self._normalize_text(modalidade_text)
+        if modalidade_norm == "FLEX":
+            return "FLE"
+        return modalidade_text
 
     def _resolve_motivo_codigo(self, motivo: str) -> str:
         motivo_norm = self._normalize_text(motivo)
