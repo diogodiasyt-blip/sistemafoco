@@ -213,11 +213,24 @@ def baixar(driver, log_callback):
     log_callback("Download enviado")
 
 
+def atualizar_relatorio_contratos(relatorio_path, registros, contrato, status, log_callback):
+    registros.append({"contrato": contrato, "status": status})
+    try:
+        pd.DataFrame(registros, columns=["contrato", "status"]).to_excel(relatorio_path, index=False)
+    except Exception as exc:
+        log_callback(f"Nao foi possivel atualizar o relatorio: {exc}")
+
+
 def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_callback, queue_result, progress_callback):
     start_time = time.time()
     success = []
     failed = []
     processed = set()
+    relatorio_registros = []
+    relatorio_path = os.path.join(
+        os.path.dirname(os.path.abspath(planilha_path)),
+        f"Relatorio_Contratos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+    )
     driver = None
 
     log_callback("Validando pasta de salvamento...")
@@ -236,6 +249,7 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
         contratos = df["contrato"].dropna().astype(str).tolist()
         total = len(contratos)
         log_callback(f"Iniciando processamento de {total} contratos...")
+        log_callback(f"Relatorio em tempo real: {relatorio_path}")
 
         for i, contrato in enumerate(contratos, 1):
             if contrato in processed:
@@ -246,14 +260,35 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
             try:
                 if not buscar(driver, contrato, log_callback):
                     failed.append(contrato)
+                    atualizar_relatorio_contratos(
+                        relatorio_path,
+                        relatorio_registros,
+                        contrato,
+                        "ERRO - contrato nao encontrado",
+                        log_callback,
+                    )
                     continue
 
                 baixar(driver, log_callback)
 
                 if esperar_download(pasta_download, contrato, log_callback, timeout=65):
                     success.append(contrato)
+                    atualizar_relatorio_contratos(
+                        relatorio_path,
+                        relatorio_registros,
+                        contrato,
+                        "BAIXADO",
+                        log_callback,
+                    )
                 else:
                     failed.append(contrato)
+                    atualizar_relatorio_contratos(
+                        relatorio_path,
+                        relatorio_registros,
+                        contrato,
+                        "ERRO - PDF nao detectado",
+                        log_callback,
+                    )
 
                 progress_callback((i / total) * 100)
 
@@ -261,8 +296,16 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
                 time.sleep(2.0)
 
             except Exception as e:
-                log_callback(f"Erro em {contrato}: {str(e)}")
+                erro = str(e)
+                log_callback(f"Erro em {contrato}: {erro}")
                 failed.append(contrato)
+                atualizar_relatorio_contratos(
+                    relatorio_path,
+                    relatorio_registros,
+                    contrato,
+                    f"ERRO - {erro}",
+                    log_callback,
+                )
 
     except Exception as e:
         log_callback(f"ERRO FATAL: {str(e)}")
