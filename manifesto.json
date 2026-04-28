@@ -18,7 +18,7 @@
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
     "classe": "BillingApp",
-    "versao": "1.0.20"
+    "versao": "1.0.14"
   },
   "cobcloud": {
     "arquivo": "robo_cobcloud.py",

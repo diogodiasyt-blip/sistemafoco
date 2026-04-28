@@ -404,11 +404,18 @@ MOTIVE_CODE_GROUPS = {
 
 class ProtheusBot:
     HELP_FIELD_PATTERNS = {
-        "tipo": ("E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
-        "natureza": ("E1_NATUREZ", "NATUREZ", "NATUREZA PROBLEMA"),
-        "centro_custo": ("NOCUSTO", "E1_CCUSTO", "C. CUSTO", "CENTRO DE CUSTO"),
-        "segregacao": ("REGNOIS", "E1_XSEGREG", "SEGREGACAO", "SEGREGA"),
+        "tipo": ("E1_TIPO", "HELP: E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
+        "natureza": ("E1_NATUREZ", "HELP: E1_NATUREZ", "NATUREZ", "NATUREZA PROBLEMA"),
+        "centro_custo": ("NOCUSTO", "HELP: NOCUSTO", "E1_CCUSTO", "C. CUSTO", "CENTRO DE CUSTO"),
+        "segregacao": ("REGNOIS", "HELP: REGNOIS", "E1_XSEGREG", "SEGREGACAO", "SEGREGA"),
     }
+    HELP_TEXT_HINTS = (
+        "Help: E1_TIPO Problema: Campo",
+        "Help: E1_NATUREZProblema:",
+        "Help: E1_NATUREZ Problema:",
+        "Help: NOCUSTO Problema: C.",
+        "Help: REGNOIS Problema:",
+    )
 
     def __init__(
         self,
@@ -1382,22 +1389,13 @@ class ProtheusBot:
         for attempt in range(1, attempts + 1):
             locator.wait_for(state="visible", timeout=45000)
             locator.scroll_into_view_if_needed(timeout=3000)
-            focused = self._focus_host_input(locator)
-            if not focused:
-                locator.click(force=True)
+            self._focus_host_input(locator)
             page.wait_for_timeout(250)
 
             try:
-                if not focused:
-                    page.keyboard.press("Control+A")
-                    page.wait_for_timeout(100)
-                    page.keyboard.press("Backspace")
-                    page.wait_for_timeout(100)
-                    page.keyboard.type(expected, delay=120)
-                else:
-                    self._fill_host_input(locator, expected, dismiss_popup=False)
-            except Exception:
                 self._fill_host_input(locator, expected, dismiss_popup=False)
+            except Exception:
+                self._keyboard_fill_locator(locator, expected)
 
             if settle_locator is not None:
                 self._stabilize_on_previous_field(settle_locator, field_key)
@@ -1428,6 +1426,22 @@ class ProtheusBot:
 
         label = FIELD_MAP.get(field_key or "", {}).get("label", field_key or "campo")
         raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
+
+    def _keyboard_fill_locator(self, locator, value: str) -> None:
+        if locator is None:
+            raise RuntimeError("Campo de entrada nao foi localizado.")
+        page = self._require_page()
+        locator.wait_for(state="visible", timeout=45000)
+        locator.scroll_into_view_if_needed(timeout=3000)
+        if not self._focus_host_input(locator):
+            locator.click(force=True)
+            page.wait_for_timeout(250)
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(120)
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(120)
+        page.keyboard.type(str(value), delay=120)
+        page.wait_for_timeout(500)
 
     def _stabilize_on_previous_field(self, locator, current_field_key: str | None = None) -> None:
         page = self._require_page()
@@ -1590,28 +1604,102 @@ class ProtheusBot:
                     help_dialog.get_by_text("Fechar", exact=True),
                     help_dialog.locator('wa-button[caption="Fechar"]'),
                     help_dialog.locator('button:has-text("Fechar")'),
+                    help_dialog.locator("text=Fechar"),
+                    help_dialog.locator("xpath=.//*[normalize-space()='Fechar']"),
+                    help_dialog.locator("xpath=.//button[contains(normalize-space(.),'Fechar')]"),
+                    help_dialog.locator("xpath=.//wa-button[contains(@caption,'Fechar')]"),
                     page.get_by_role("button", name="Fechar"),
                     page.get_by_text("Fechar", exact=True),
+                    page.locator('wa-button[caption="Fechar"]'),
+                    page.locator('button:has-text("Fechar")'),
+                    page.locator("text=Fechar"),
                 ]
             )
             if close_button is not None:
-                close_button.click(force=True)
-                page.wait_for_timeout(1000)
+                self._safe_click_locator(close_button)
+                page.wait_for_timeout(1200)
                 self.log("Aviso do TOTVS fechado.")
+                return field_key
+            if self._click_visible_fechar_by_script():
+                page.wait_for_timeout(1200)
+                self.log("Aviso do TOTVS fechado por fallback.")
                 return field_key
             self.log("Aviso do TOTVS detectado, mas o botao Fechar nao foi localizado.")
         except Exception:
             return None
         return None
 
+    def _safe_click_locator(self, locator) -> None:
+        try:
+            locator.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            pass
+        try:
+            locator.click(force=True, timeout=5000)
+            return
+        except Exception:
+            pass
+        try:
+            locator.evaluate(
+                """
+                (node) => {
+                    const clickable = node.closest('button, wa-button, [role="button"]') || node;
+                    clickable.click();
+                }
+                """
+            )
+            return
+        except Exception as exc:
+            raise RuntimeError(f"Nao foi possivel clicar no elemento: {exc}") from exc
+
+    def _click_visible_fechar_by_script(self) -> bool:
+        try:
+            return bool(
+                self._require_page().evaluate(
+                    """
+                    () => {
+                        const norm = (text) => (text || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim().toUpperCase();
+                        const candidates = Array.from(document.querySelectorAll('button, wa-button, [role="button"], span, div'));
+                        for (const node of candidates.reverse()) {
+                            const text = norm(node.innerText || node.textContent || node.getAttribute('caption') || '');
+                            if (text !== 'FECHAR') continue;
+                            const rect = node.getBoundingClientRect();
+                            const style = window.getComputedStyle(node);
+                            if (rect.width === 0 || rect.height === 0 || style.visibility === 'hidden' || style.display === 'none') continue;
+                            const clickable = node.closest('button, wa-button, [role="button"]') || node;
+                            clickable.click();
+                            return true;
+                        }
+                        return false;
+                    }
+                    """
+                )
+            )
+        except Exception:
+            return False
+
     def _find_visible_totvs_help_dialog(self):
         page = self._require_page()
+        for hint in self.HELP_TEXT_HINTS:
+            try:
+                marker = page.get_by_text(hint).last
+                if not marker.is_visible(timeout=300):
+                    continue
+                dialog = marker.locator(
+                    "xpath=ancestor::wa-dialog[1] | ancestor::div[@role='dialog'][1] | ancestor::*[contains(@class,'dialog')][1]"
+                ).last
+                if dialog.count() > 0 and dialog.is_visible(timeout=300):
+                    return dialog
+                return marker
+            except Exception:
+                continue
+
         dialog_selectors = [
             "wa-dialog.dict-msdialog",
             "wa-dialog",
             "div[role='dialog']",
         ]
-        help_markers = ("PROBLEMA", "HELP:", "CAMPO", "E1_", "NOCUSTO", "REGNOIS")
+        help_markers = ("PROBLEMA", "HELP:", "CAMPO", "E1_", "NOCUSTO", "REGNOIS", "E1_TIPO", "E1_NATUREZ")
 
         for selector in dialog_selectors:
             try:
@@ -1630,6 +1718,22 @@ class ProtheusBot:
                         return dialog
                 except Exception:
                     continue
+        try:
+            visible_help = page.locator(
+                "xpath=//*[contains(normalize-space(.),'Help: E1_') or contains(normalize-space(.),'Help: NOCUSTO') or contains(normalize-space(.),'Help: REGNOIS')]"
+            )
+            count = visible_help.count()
+            for index in range(count - 1, -1, -1):
+                marker = visible_help.nth(index)
+                if marker.is_visible(timeout=300):
+                    dialog = marker.locator(
+                        "xpath=ancestor::wa-dialog[1] | ancestor::div[@role='dialog'][1] | ancestor::*[contains(@class,'dialog')][1]"
+                    ).last
+                    if dialog.count() > 0 and dialog.is_visible(timeout=300):
+                        return dialog
+                    return marker
+        except Exception:
+            pass
         return None
 
     def _raise_if_totvs_error_present(self) -> None:
