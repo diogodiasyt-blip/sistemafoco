@@ -19,5 +19,16 @@
     "arquivo": "robo_faturamento_v1.py",
     "classe": "BillingApp",
     "versao": "1.0.13"
+  },
+  "cobcloud": {
+    "arquivo": "robo_cobcloud.py",
+    "classe": "RoboCobCloudApp",
+    "versao": "1.0.0",
+    "constructor_mode": "external_process",
+    "title": "Robo CobCloud",
+    "geometry": "980x760",
+    "resizable": true,
+    "card_title": "CobCloud",
+    "description": "Negativacao de cadastros sem endereco no CobCloud, com checkpoint e relatorio em tempo real."
   }
 }
