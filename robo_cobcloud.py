@@ -230,7 +230,7 @@ class CobCloudBot:
             self.salvar_checkpoint()
 
     def iniciar_driver(self):
-        self.log("Abrindo Chrome normal para login manual, ainda sem conectar o Selenium...")
+        self.log("Abrindo Chrome para login no CobCloud...")
         os.makedirs(CHROME_PROFILE_DIR, exist_ok=True)
         chrome = encontrar_chrome()
 
@@ -250,14 +250,13 @@ class CobCloudBot:
             )
             time.sleep(3)
         else:
-            self.log("Chrome de login manual ja esta aberto.")
+            self.log("Chrome ja esta aberto. Reaproveitando sessao...")
             subprocess.Popen(
                 [chrome, LOGIN_URL],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
 
-        self.log("Aguardando porta do Chrome ficar disponivel...")
         fim = time.time() + 20
         while time.time() < fim and not porta_esta_aberta(DEBUG_PORT):
             time.sleep(0.5)
@@ -266,7 +265,7 @@ class CobCloudBot:
             raise RuntimeError("Nao consegui abrir o Chrome para login manual.")
 
     def conectar_selenium_ao_chrome(self):
-        self.log("Conectando Selenium ao Chrome ja logado...")
+        self.log("Conectando ao navegador logado...")
         options = webdriver.ChromeOptions()
         options.debugger_address = f"127.0.0.1:{DEBUG_PORT}"
         service = Service(ChromeDriverManager().install())
@@ -278,13 +277,11 @@ class CobCloudBot:
             self.driver.switch_to.window(handle)
             url = self.driver.current_url
             if "foco.cobcloud.com.br/app" in url:
-                self.log(f"Aba logada selecionada: {url}")
                 return
         for handle in self.driver.window_handles:
             self.driver.switch_to.window(handle)
             url = self.driver.current_url
             if "foco.cobcloud.com.br" in url:
-                self.log(f"Aba CobCloud selecionada: {url}")
                 return
 
     def wait(self, timeout=30):
@@ -339,44 +336,36 @@ class CobCloudBot:
         return elemento
 
     def clicar(self, xpath, descricao, timeout=30):
-        self.log(f"Aguardando {descricao}...")
         self.ritmo_seguro()
         self.aguardar_carregamentos(timeout=3)
         elemento = self.esperar_clicavel(xpath, timeout)
         elemento.click()
-        self.log(f"Clique confirmado: {descricao}")
         time.sleep(ESPERA_APOS_CLIQUE)
         self.aguardar_carregamentos(timeout=8)
         return elemento
 
     def preencher(self, xpath, valor, descricao, timeout=30):
-        self.log(f"Aguardando campo {descricao}...")
         self.ritmo_seguro(segundos=0.25)
         self.aguardar_carregamentos(timeout=3)
         campo = self.esperar_clicavel(xpath, timeout)
         campo.clear()
         campo.send_keys(valor)
-        self.log(f"Campo preenchido: {descricao}")
         time.sleep(0.5)
 
     def selecionar_por_valor(self, xpath, valor, descricao, timeout=30):
-        self.log(f"Aguardando lista {descricao}...")
         self.ritmo_seguro()
         self.aguardar_carregamentos(timeout=3)
         elemento = self.esperar_clicavel(xpath, timeout)
         Select(elemento).select_by_value(valor)
-        self.log(f"Selecionado em {descricao}: {valor}")
         time.sleep(ESPERA_APOS_SELECAO)
         self.aguardar_carregamentos(timeout=6)
 
     def preencher_input_por_xpath(self, xpath, valor, descricao, timeout=30):
-        self.log(f"Aguardando campo {descricao}...")
         self.ritmo_seguro(segundos=0.25)
         self.aguardar_carregamentos(timeout=3)
         campo = self.esperar_clicavel(xpath, timeout)
         campo.clear()
         campo.send_keys(valor)
-        self.log(f"Campo preenchido: {descricao} = {valor}")
         time.sleep(0.5)
 
     def login_cobcloud(self):
@@ -385,10 +374,8 @@ class CobCloudBot:
         self.status("Aguardando login manual")
         self.log("Navegador aberto na tela de login.")
         self.log("Digite usuario e senha manualmente, resolva a verificacao de humano e clique em Acessar.")
-        self.log("O Selenium so vai conectar depois que o navegador sair da tela de login.")
         self.aguardar_login_manual_por_url(timeout=300)
         self.conectar_selenium_ao_chrome()
-        self.log("O robo vai validar a sessao agora.")
         self.validar_login(timeout=20)
         self.abrir_tela_base_direta()
 
@@ -400,7 +387,7 @@ class CobCloudBot:
             for aba in abas:
                 url = aba.get("url", "")
                 if "foco.cobcloud.com.br/app" in url:
-                    self.log(f"Login manual detectado: {url}")
+                    self.log("Login manual detectado.")
                     return
             time.sleep(1)
         raise RuntimeError("Tempo esgotado aguardando login manual no CobCloud.")
@@ -409,7 +396,7 @@ class CobCloudBot:
         self.status("Validando login")
         url_atual = self.driver.current_url
         if "foco.cobcloud.com.br/app" in url_atual:
-            self.log(f"Login validado pela URL: {url_atual}")
+            self.log("Login validado.")
             return
 
         try:
@@ -417,13 +404,13 @@ class CobCloudBot:
             texto = titulo.text.strip()
             esperado = "Recebimentos (Últimos 30 dias)"
             if texto == esperado:
-                self.log("Login validado pelo dashboard.")
+                self.log("Login validado.")
                 return
             raise RuntimeError(f"Esperado '{esperado}', encontrado '{texto}'.")
         except Exception as exc:
             url_atual = self.driver.current_url
             if "foco.cobcloud.com.br/app" in url_atual:
-                self.log(f"Titulo do dashboard nao apareceu, mas a sessao esta logada: {url_atual}")
+                self.log("Login validado.")
                 return
             raise RuntimeError(f"Login nao validado. URL atual: {url_atual}. Detalhe: {exc}")
 
@@ -442,20 +429,17 @@ class CobCloudBot:
 
     def abrir_tela_base_direta(self):
         self.status("Abrindo tela base")
-        self.log("Abrindo link direto da Negativacao...")
         self.driver.get(BASE_URL)
         try:
             self.validar_tela_base()
             return True
         except Exception as exc:
-            self.log(f"Link direto da Negativacao ainda nao validou: {exc}")
             return False
 
     def validar_tela_base(self):
         self.aguardar_carregamentos(timeout=25)
         self.esperar_clicavel(XP.tipo, timeout=35)
         self.esperar_clicavel(XP.status, timeout=35)
-        self.log("Tela base de negativacao pronta.")
 
     def aplicar_filtros(self):
         self.status("Aplicando filtros")
@@ -466,7 +450,7 @@ class CobCloudBot:
         self.aguardar_carregamentos(timeout=10)
         self.esperar_presente(XP.tabela_linhas, timeout=45)
         time.sleep(0.5)
-        self.log("Pesquisa concluida.")
+        self.log("Filtros aplicados. Iniciando analise dos cadastros com erro.")
 
     def pesquisar_processo_negativacao(self, processo):
         self.status(f"Pesquisando negativacao {processo}")
@@ -480,13 +464,7 @@ class CobCloudBot:
         self.esperar_presente(XP.tabela_linhas, timeout=45)
         time.sleep(0.5)
         linhas = self.obter_linhas_visiveis()
-        self.log(f"Pesquisa do processo {processo}: {len(linhas)} linha(s) encontrada(s).")
-        for posicao, linha in enumerate(linhas, 1):
-            dados = self.extrair_dados_linha(linha)
-            self.log(
-                f"Resultado {posicao}: {dados['processo']} | {dados['cliente']} | "
-                f"{dados['titulo']} | {dados['parcela']} | {dados['erro'] or 'sem erro'}"
-            )
+        self.log(f"Linhas encontradas para inclusao no processo {processo}: {len(linhas)}")
         return linhas
 
     def obter_linhas_visiveis(self):
@@ -571,15 +549,13 @@ class CobCloudBot:
         self.ritmo_seguro()
         self.aguardar_carregamentos(timeout=3)
         link = linha.find_element(By.XPATH, "./td[3]//a")
-        href = link.get_attribute("href")
         texto = link.text.strip()
-        self.log(f"Abrindo processo {texto}: {href}")
+        self.log(f"Abrindo processo {texto}...")
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link)
         self.wait(15).until(lambda _driver: link.is_enabled() and link.is_displayed())
         link.click()
         time.sleep(ESPERA_APOS_CLIQUE)
         self.aguardar_carregamentos(timeout=8)
-        self.log(f"Tela do processo aberta: {self.driver.current_url}")
 
     def valor_input(self, campo_id):
         self.esperar_presente(f"//*[@id='{campo_id}']", timeout=25)
@@ -602,10 +578,6 @@ class CobCloudBot:
         faltantes = [nome for nome, valor in valores.items() if not valor.strip()]
         if valores["UF"] and len(valores["UF"].strip()) != 2:
             faltantes.append("UF")
-        self.log(
-            "Endereco atual: "
-            + " | ".join(f"{nome}: {valor or 'VAZIO'}" for nome, valor in valores.items())
-        )
         return valores, sorted(set(faltantes))
 
     def clicar_aba_enderecos(self):
@@ -642,7 +614,6 @@ class CobCloudBot:
             try:
                 botao = self.esperar_clicavel(xpath, timeout=3)
                 botao.click()
-                self.log("Confirmacao do dialogo realizada.")
                 time.sleep(ESPERA_APOS_CLIQUE)
                 self.aguardar_carregamentos(timeout=15)
                 return True
@@ -651,12 +622,11 @@ class CobCloudBot:
         return False
 
     def aguardar_sucesso_endereco(self):
-        self.log("Aguardando mensagem: Alteracao realizada com sucesso...")
         mensagem = self.esperar_presente(MENSAGEM_SUCESSO_ENDERECO_XPATH, timeout=35)
         texto = mensagem.text.strip()
         if "Alteração realizada com sucesso" not in texto and "Alteracao realizada com sucesso" not in texto:
             raise RuntimeError(f"Mensagem de sucesso inesperada: {texto}")
-        self.log(f"Confirmacao recebida: {texto}")
+        self.log("Endereco principal atualizado com sucesso.")
 
     def selecionar_primeiro_endereco_completo(self):
         self.clicar_aba_enderecos()
@@ -667,11 +637,6 @@ class CobCloudBot:
 
         for posicao, linha in enumerate(linhas, 1):
             endereco = self.dados_endereco_linha(linha)
-            self.log(
-                f"Endereco {posicao}: {endereco['endereco'] or 'VAZIO'} | "
-                f"{endereco['bairro'] or 'VAZIO'} | {endereco['cidade'] or 'VAZIO'} | "
-                f"{endereco['uf'] or 'VAZIO'} | {endereco['cep'] or 'VAZIO'}"
-            )
             if not self.endereco_linha_completo(endereco):
                 continue
 
@@ -680,7 +645,7 @@ class CobCloudBot:
             self.wait(15).until(lambda _driver: botao_principal.is_enabled() and botao_principal.is_displayed())
             self.ritmo_seguro()
             botao_principal.click()
-            self.log(f"Endereco completo selecionado: {endereco['endereco']} - {endereco['cidade']}/{endereco['uf']}")
+            self.log(f"Endereco completo localizado: {endereco['cidade']}/{endereco['uf']}")
             time.sleep(ESPERA_APOS_CLIQUE)
             self.confirmar_dialogo_opcional()
             self.aguardar_sucesso_endereco()
@@ -693,11 +658,11 @@ class CobCloudBot:
     def tratar_endereco_do_processo(self, dados):
         _valores, faltantes = self.validar_endereco_cadastral()
         if not faltantes:
-            self.log(f"Processo {dados['processo']} ja possui endereco cadastral completo.")
+            self.log(f"Processo {dados['processo']} ja possui endereco completo.")
             self.registrar_relatorio(dados, "ENDERECO_OK", "Endereco cadastral completo")
             return "ok"
 
-        self.log(f"Endereco cadastral incompleto. Campos faltando: {', '.join(faltantes)}")
+        self.log(f"Endereco incompleto. Campos faltando: {', '.join(faltantes)}")
         endereco = self.selecionar_primeiro_endereco_completo()
         if endereco:
             observacao = (
@@ -717,10 +682,8 @@ class CobCloudBot:
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao_acoes)
         self.wait(15).until(lambda _driver: botao_acoes.is_enabled() and botao_acoes.is_displayed())
         self.driver.execute_script("arguments[0].click();", botao_acoes)
-        self.log("Menu Acoes aberto.")
         time.sleep(0.2)
         if self.clicar_opcao_inclusao_rapida(timeout=4):
-            self.log("Acao Inclusao selecionada.")
             time.sleep(0.25)
             return
         raise RuntimeError("Nao encontrei a opcao Inclusao no menu Acoes.")
@@ -793,7 +756,6 @@ class CobCloudBot:
         raise RuntimeError(f"Nao consegui clicar em confirmar inclusao: {ultimo_erro}")
 
     def clicar_rapido_por_xpath(self, xpath, descricao, timeout=8):
-        self.log(f"Aguardando {descricao}...")
         fim = time.time() + timeout
         ultimo_erro = None
         while time.time() < fim:
@@ -808,7 +770,6 @@ class CobCloudBot:
                         )
                         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", clicavel)
                         self.driver.execute_script("arguments[0].click();", clicavel)
-                        self.log(f"Clique confirmado: {descricao}")
                         return clicavel
             except Exception as exc:
                 ultimo_erro = exc
@@ -827,7 +788,6 @@ class CobCloudBot:
                         continue
                     texto = mensagem.text.strip()
                     if "data do documento e obrigatoria" in normalizar_texto(texto):
-                        self.log(f"Erro esperado na inclusao: {texto}")
                         return True
                 except Exception:
                     continue
@@ -835,7 +795,6 @@ class CobCloudBot:
         return False
 
     def cancelar_modal_inclusao(self):
-        self.log("Cancelando modal de inclusao apos erro esperado...")
         seletores_cancelar = [
             CANCELAR_INCLUSAO_XPATH,
             "//div[contains(@class,'MuiDialog-root')]//button[.//span[contains(normalize-space(),'Cancelar')]]",
@@ -846,7 +805,6 @@ class CobCloudBot:
         for xpath in seletores_cancelar:
             try:
                 botao = self.clicar_rapido_por_xpath(xpath, "cancelar inclusao", timeout=2)
-                self.log("Modal de inclusao cancelado.")
                 time.sleep(0.3)
                 return
             except Exception as exc:
@@ -877,10 +835,7 @@ class CobCloudBot:
             if alvo is None:
                 break
 
-            self.log(
-                f"Incluindo negativacao: {alvo_dados['processo']} | "
-                f"{alvo_dados['titulo']} | {alvo_dados['parcela']} | {alvo_dados['valor']}"
-            )
+            self.log(f"Incluindo negativacao do titulo {alvo_dados['titulo']}...")
             self.clicar_acao_inclusao(alvo)
             resultado_inclusao = self.confirmar_inclusao()
             inclusoes += 1
@@ -891,7 +846,6 @@ class CobCloudBot:
                     "INCLUSAO_CONTABILIZADA_CANCELADA",
                     "Confirmou inclusao e clicou em cancelar apos 1 segundo",
                 )
-                self.log("Inclusao contabilizada e modal cancelado. Verificando outras linhas do mesmo processo.")
             else:
                 self.registrar_relatorio(alvo_dados, "INCLUSAO_SOLICITADA", "Acao Inclusao confirmada")
 
@@ -912,18 +866,16 @@ class CobCloudBot:
         erro = dados["erro"]
         chave = self.chave_linha(dados)
         if chave in self.chaves_ignoradas or processo in self.processos_tratados:
-            self.log(f"[{indice}] Ignorando ja tratado: {processo or 'sem processo'}")
             return False
 
         self.avaliados += 1
 
         if not self.deve_processar_linha(dados):
-            self.log(f"[{indice}] Pulando {processo or 'sem processo'} | Erro diferente: {erro or 'sem descricao'}")
             self.registrar_relatorio(dados, "PULADO", "Erro diferente de Informar o endereco")
             self.marcar_linha_ignorada(chave)
             return False
 
-        self.log(f"[{indice}] SELECIONADO para endereco: Processo {processo} | {cliente} | {documento}")
+        self.log(f"Selecionado: {processo} | {cliente} | {documento}")
         self.registrar_relatorio(dados, "SELECIONADO", "Informar o endereco")
         self.status(f"Processando {processo or indice}")
 
@@ -934,10 +886,10 @@ class CobCloudBot:
             self.realizados += 1
             self.contador(self.realizados)
             self.marcar_processo_tratado(processo)
-            self.log(f"Tratamento de endereco finalizado para {processo}: {resultado}")
+            self.log(f"Endereco do processo {processo}: {resultado}")
             if resultado in {"ok", "atualizado"}:
                 inclusoes = self.incluir_negativacoes_do_processo(dados)
-                self.log(f"Tratamento de inclusao finalizado para {processo}: {inclusoes} linha(s)")
+                self.log(f"Inclusoes do processo {processo}: {inclusoes}")
             self.recuperar_tela_base()
             return True
         except Exception as exc:
@@ -957,7 +909,6 @@ class CobCloudBot:
             caption_antes = self.texto_paginacao()
             botao = self.esperar_presente(XP.proxima_pagina, timeout=5)
             if self.botao_desabilitado(botao):
-                self.log("Botao de proxima pagina esta desabilitado.")
                 return False
             self.ritmo_seguro()
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", botao)
@@ -967,9 +918,7 @@ class CobCloudBot:
             self.esperar_presente(XP.tabela_linhas, timeout=20)
             mudou = self.aguardar_paginacao_mudar(caption_antes, timeout=8)
             if not mudou:
-                self.log("Clique em proxima pagina nao alterou a paginacao; considerando fim.")
                 return False
-            self.log(f"Pagina alterada: {caption_antes or 'sem contador'} -> {self.texto_paginacao()}")
             time.sleep(0.25)
             return True
         except Exception:
@@ -1000,7 +949,7 @@ class CobCloudBot:
             time.sleep(0.25)
         return False
 
-    def executar(self, limite=None):
+    def executar(self):
         inicio = time.time()
         try:
             self.iniciar_driver()
@@ -1019,9 +968,6 @@ class CobCloudBot:
                 reiniciou_base = False
                 for indice, linha in enumerate(linhas, 1):
                     self.controle.aguardar_liberacao()
-                    if limite and self.realizados >= limite:
-                        self.log(f"Limite de teste atingido: {limite}.")
-                        return
                     if self.processar_linha(indice, linha):
                         reiniciou_base = True
                         break
@@ -1067,10 +1013,6 @@ class RoboCobCloudApp:
         self.root.minsize(900, 680)
         self.root.configure(fg_color=MAIN_BG)
 
-        self.usuario_var = tk.StringVar(value=USUARIO_PADRAO)
-        self.senha_var = tk.StringVar(value=SENHA_PADRAO)
-        self.headless_var = tk.BooleanVar(value=False)
-        self.limite_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="Aguardando inicio")
         self.contador_var = tk.StringVar(value="0")
         self.tempo_var = tk.StringVar(value="00:00")
@@ -1134,46 +1076,6 @@ class RoboCobCloudApp:
         ).pack(anchor="w", pady=(6, 0))
         ctk.CTkLabel(texto, text="BACKOFFICE - NEGATIVACAO", text_color="#a65f56", font=("Segoe UI", 12, "bold")).pack(
             anchor="w", pady=(10, 0)
-        )
-
-        acesso = self.criar_secao(scroll, "Acesso CobCloud")
-        grid = ctk.CTkFrame(acesso, fg_color="transparent")
-        grid.pack(fill="x", padx=18, pady=(0, 18))
-        grid.grid_columnconfigure((0, 1), weight=1)
-
-        ctk.CTkLabel(grid, text="Usuario", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(
-            row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 6)
-        )
-        ctk.CTkLabel(grid, text="Senha", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(
-            row=0, column=1, sticky="w", padx=(10, 0), pady=(0, 6)
-        )
-        ctk.CTkEntry(grid, textvariable=self.usuario_var, height=42, corner_radius=12).grid(
-            row=1, column=0, sticky="ew", padx=(0, 10)
-        )
-        ctk.CTkEntry(grid, textvariable=self.senha_var, show="*", height=42, corner_radius=12).grid(
-            row=1, column=1, sticky="ew", padx=(10, 0)
-        )
-
-        config = self.criar_secao(scroll, "Configuracoes")
-        config_grid = ctk.CTkFrame(config, fg_color="transparent")
-        config_grid.pack(fill="x", padx=18, pady=(0, 18))
-        config_grid.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkCheckBox(
-            config_grid,
-            text="Executar em modo invisivel",
-            variable=self.headless_var,
-            font=("Segoe UI", 13),
-            text_color="#303030",
-            checkbox_width=22,
-            checkbox_height=22,
-            corner_radius=8,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 18))
-        ctk.CTkLabel(config_grid, text="Limite de teste", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(
-            row=0, column=1, sticky="e", padx=(0, 8)
-        )
-        ctk.CTkEntry(config_grid, textvariable=self.limite_var, width=90, height=36, corner_radius=10).grid(
-            row=0, column=2, sticky="e"
         )
 
         progresso = self.criar_secao(scroll, "Progresso da Execucao")
@@ -1281,20 +1183,6 @@ class RoboCobCloudApp:
             messagebox.showwarning("Atencao", "O robo ja esta em execucao.")
             return
 
-        usuario = self.usuario_var.get().strip()
-        senha = self.senha_var.get().strip()
-        if not usuario or not senha:
-            messagebox.showwarning("Atencao", "Informe usuario e senha.")
-            return
-
-        limite = None
-        if self.limite_var.get().strip():
-            try:
-                limite = int(self.limite_var.get().strip())
-            except ValueError:
-                messagebox.showwarning("Atencao", "O limite de teste precisa ser numerico.")
-                return
-
         self.controle = ControleExecucao()
         self.inicio_execucao = time.time()
         self.contador_var.set("0")
@@ -1306,21 +1194,21 @@ class RoboCobCloudApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
-        self.thread = threading.Thread(target=self.executar_thread, args=(usuario, senha, limite), daemon=True)
+        self.thread = threading.Thread(target=self.executar_thread, daemon=True)
         self.thread.start()
 
-    def executar_thread(self, usuario, senha, limite):
+    def executar_thread(self):
         try:
             bot = CobCloudBot(
-                usuario=usuario,
-                senha=senha,
-                headless=self.headless_var.get(),
+                usuario=USUARIO_PADRAO,
+                senha=SENHA_PADRAO,
+                headless=False,
                 controle=self.controle,
                 log_callback=self.log,
                 status_callback=self.set_status,
                 contador_callback=self.set_contador,
             )
-            bot.executar(limite=limite)
+            bot.executar()
         except Exception as exc:
             self.log(f"ERRO: {exc}")
             self.set_status("Erro")

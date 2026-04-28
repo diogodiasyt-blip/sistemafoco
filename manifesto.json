@@ -23,7 +23,7 @@
   "cobcloud": {
     "arquivo": "robo_cobcloud.py",
     "classe": "RoboCobCloudApp",
-    "versao": "1.0.0",
+    "versao": "1.0.3",
     "constructor_mode": "external_process",
     "title": "Robo CobCloud",
     "geometry": "980x760",
