@@ -404,10 +404,10 @@ MOTIVE_CODE_GROUPS = {
 
 class ProtheusBot:
     HELP_FIELD_PATTERNS = {
-        "tipo": ("E1_TIPO",),
-        "natureza": ("E1_NATUREZ",),
-        "centro_custo": ("NOCUSTO", "E1_CCUSTO"),
-        "segregacao": ("REGNOIS", "E1_XSEGREG"),
+        "tipo": ("E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
+        "natureza": ("E1_NATUREZ", "NATUREZ", "NATUREZA PROBLEMA"),
+        "centro_custo": ("NOCUSTO", "E1_CCUSTO", "C. CUSTO", "CENTRO DE CUSTO"),
+        "segregacao": ("REGNOIS", "E1_XSEGREG", "SEGREGACAO", "SEGREGA"),
     }
 
     def __init__(
@@ -841,38 +841,29 @@ class ProtheusBot:
             "historico": historico_input,
         }
 
-        self._click_and_fill_field(prefixo_input, payload["prefixo"], "prefixo")
-        self._settle_after_field()
+        self._click_and_fill_field(prefixo_input, payload["prefixo"], "prefixo", settle_locator=prefixo_input)
 
         invoice_number = self._read_from_locator(numero_titulo_input)
 
         self._select_combo_option(tipo_pg_combo, payload["tipo_pg"])
-        self._settle_after_field()
+        self._stabilize_on_previous_field(prefixo_input, "tipo_pg")
 
-        self._click_and_fill_field(tipo_input, payload["tipo"], "tipo")
-        self._settle_after_field()
-        self._click_and_fill_field(natureza_input, payload["natureza"], "natureza")
-        self._settle_after_field()
-        self._click_and_fill_field(contrato_input, payload["contrato"], "contrato")
-        self._settle_after_field()
-        self._click_and_fill_field(vencimento_input, payload["vencimento"], "vencimento")
-        self._settle_after_field()
-        self._click_and_fill_field(valor_input, payload["valor_titulo"], "valor_titulo")
-        self._settle_after_field()
-        self._click_and_fill_field(loja_input, payload["centro_custo"], "centro_custo")
-        self._settle_after_field()
+        self._click_and_fill_field(tipo_input, payload["tipo"], "tipo", settle_locator=prefixo_input)
+        self._click_and_fill_field(natureza_input, payload["natureza"], "natureza", settle_locator=tipo_input)
+        self._click_and_fill_field(contrato_input, payload["contrato"], "contrato", settle_locator=natureza_input)
+        self._click_and_fill_field(vencimento_input, payload["vencimento"], "vencimento", settle_locator=contrato_input)
+        self._click_and_fill_field(valor_input, payload["valor_titulo"], "valor_titulo", settle_locator=vencimento_input)
+        self._click_and_fill_field(loja_input, payload["centro_custo"], "centro_custo", settle_locator=valor_input)
 
         self._select_combo_option(negocio_combo, payload["negocio"])
-        self._settle_after_field()
+        self._stabilize_on_previous_field(loja_input, "negocio")
 
-        self._click_and_fill_field(segregacao_input, payload["segregacao"], "segregacao")
-        self._settle_after_field()
+        self._click_and_fill_field(segregacao_input, payload["segregacao"], "segregacao", settle_locator=loja_input)
 
         self._select_combo_option(motivo_combo, payload["motivo"])
-        self._settle_after_field()
+        self._stabilize_on_previous_field(segregacao_input, "motivo")
 
-        self._click_and_fill_field(historico_input, payload["historico"], "historico")
-        self._settle_after_field()
+        self._click_and_fill_field(historico_input, payload["historico"], "historico", settle_locator=segregacao_input)
 
         if not invoice_number:
             page.wait_for_timeout(600)
@@ -1374,7 +1365,14 @@ class ProtheusBot:
         self._require_page().keyboard.press("Enter")
         self._require_page().wait_for_timeout(300)
 
-    def _click_and_fill_field(self, locator, value: str, field_key: str | None = None, attempts: int = 3) -> None:
+    def _click_and_fill_field(
+        self,
+        locator,
+        value: str,
+        field_key: str | None = None,
+        attempts: int = 3,
+        settle_locator=None,
+    ) -> None:
         if locator is None:
             raise RuntimeError("Campo de entrada nao foi localizado.")
 
@@ -1401,7 +1399,10 @@ class ProtheusBot:
             except Exception:
                 self._fill_host_input(locator, expected, dismiss_popup=False)
 
-            page.wait_for_timeout(1500)
+            if settle_locator is not None:
+                self._stabilize_on_previous_field(settle_locator, field_key)
+            else:
+                page.wait_for_timeout(1500)
             error_field = self._dismiss_help_popup_if_present()
             if error_field:
                 if field_key and error_field != "desconhecido" and error_field != field_key:
@@ -1427,6 +1428,24 @@ class ProtheusBot:
 
         label = FIELD_MAP.get(field_key or "", {}).get("label", field_key or "campo")
         raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
+
+    def _stabilize_on_previous_field(self, locator, current_field_key: str | None = None) -> None:
+        page = self._require_page()
+        if locator is None:
+            page.wait_for_timeout(1500)
+            return
+
+        label = FIELD_MAP.get(current_field_key or "", {}).get("label", current_field_key or "campo")
+        try:
+            locator.wait_for(state="visible", timeout=45000)
+            locator.scroll_into_view_if_needed(timeout=3000)
+            focused = self._focus_host_input(locator)
+            if not focused:
+                locator.click(force=True)
+            page.wait_for_timeout(1500)
+            self.log(f"Campo {label} estabilizado voltando ao campo anterior.")
+        except Exception as exc:
+            raise RuntimeError(f"Nao foi possivel estabilizar o TOTVS apos preencher {label}: {exc}") from exc
 
     def _focus_host_input(self, locator) -> bool:
         try:
@@ -1559,29 +1578,67 @@ class ProtheusBot:
     def _dismiss_help_popup_if_present(self) -> str | None:
         page = self._require_page()
         try:
-            help_dialog = page.locator("wa-dialog.dict-msdialog").filter(
-                has=page.get_by_text("Problema:", exact=False)
-            ).last
-            if help_dialog.count() == 0 or not help_dialog.is_visible():
+            help_dialog = self._find_visible_totvs_help_dialog()
+            if help_dialog is None:
                 return None
             field_key = self._identify_help_field(help_dialog.inner_text() or "")
+            self.log(f"Aviso do TOTVS detectado. Campo identificado: {field_key}.")
 
             close_button = self._first_visible_locator(
                 [
                     help_dialog.get_by_role("button", name="Fechar"),
                     help_dialog.get_by_text("Fechar", exact=True),
+                    help_dialog.locator('wa-button[caption="Fechar"]'),
+                    help_dialog.locator('button:has-text("Fechar")'),
+                    page.get_by_role("button", name="Fechar"),
+                    page.get_by_text("Fechar", exact=True),
                 ]
             )
             if close_button is not None:
                 close_button.click(force=True)
-                page.wait_for_timeout(700)
+                page.wait_for_timeout(1000)
+                self.log("Aviso do TOTVS fechado.")
                 return field_key
+            self.log("Aviso do TOTVS detectado, mas o botao Fechar nao foi localizado.")
         except Exception:
             return None
         return None
 
+    def _find_visible_totvs_help_dialog(self):
+        page = self._require_page()
+        dialog_selectors = [
+            "wa-dialog.dict-msdialog",
+            "wa-dialog",
+            "div[role='dialog']",
+        ]
+        help_markers = ("PROBLEMA", "HELP:", "CAMPO", "E1_", "NOCUSTO", "REGNOIS")
+
+        for selector in dialog_selectors:
+            try:
+                dialogs = page.locator(selector)
+                count = dialogs.count()
+            except Exception:
+                continue
+
+            for index in range(count - 1, -1, -1):
+                try:
+                    dialog = dialogs.nth(index)
+                    if not dialog.is_visible():
+                        continue
+                    text = self._normalize_text(dialog.inner_text() or "")
+                    if any(marker in text for marker in help_markers):
+                        return dialog
+                except Exception:
+                    continue
+        return None
+
     def _raise_if_totvs_error_present(self) -> None:
         page = self._require_page()
+        help_dialog = self._find_visible_totvs_help_dialog()
+        if help_dialog is not None:
+            text = self._normalize_text(help_dialog.inner_text() or "")
+            raise RuntimeError(f"TOTVS apresentou aviso antes de concluir o salvamento: {text[:350]}")
+
         try:
             dialogs = page.locator("wa-dialog.dict-msdialog")
             count = dialogs.count()
