@@ -870,13 +870,13 @@ class CobCloudBot:
 
         self.avaliados += 1
 
-        if not self.deve_processar_linha(dados):
-            self.registrar_relatorio(dados, "PULADO", "Erro diferente de Informar o endereco")
-            self.marcar_linha_ignorada(chave)
-            return False
-
         self.log(f"Selecionado: {processo} | {cliente} | {documento}")
-        self.registrar_relatorio(dados, "SELECIONADO", "Informar o endereco")
+        observacao_selecao = (
+            "Informar o endereco"
+            if self.deve_processar_linha(dados)
+            else "Erro diferente de Informar o endereco; verificando endereco cadastrado mesmo assim"
+        )
+        self.registrar_relatorio(dados, "SELECIONADO", observacao_selecao)
         self.status(f"Processando {processo or indice}")
 
         try:
