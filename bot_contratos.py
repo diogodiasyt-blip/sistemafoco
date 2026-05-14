@@ -34,6 +34,10 @@ BUTTON_BG = "#ef1a14"
 BUTTON_ACTIVE_BG = "#c91410"
 SOFT_RED = "#fff1ef"
 LINK_BLUE = "#2f64d6"
+URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
+URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
+XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
+XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
 
 
 def localizar_logo():
@@ -92,7 +96,7 @@ def iniciar_driver(pasta_download, headless, log_callback):
 
 def login(driver, usuario, senha, log_callback):
     log_callback("Fazendo login...")
-    driver.get("https://coral.aluguefoco.com.br/login")
+    driver.get(URL_CORAL_LOGIN)
     wait = WebDriverWait(driver, 20)
 
     seletores_usuario = [
@@ -137,6 +141,15 @@ def login(driver, usuario, senha, log_callback):
     log_callback("Login realizado")
 
 
+def ir_para_tela_contratos(driver, log_callback):
+    wait = WebDriverWait(driver, 20)
+    log_callback("Indo para tela base de contratos...")
+    driver.get(URL_CORAL_CONTRATOS)
+    wait.until(EC.element_to_be_clickable((By.XPATH, XPATH_ABA_CONTRATOS))).click()
+    wait.until(EC.presence_of_element_located((By.XPATH, XPATH_CAMPO_BUSCA_CONTRATOS)))
+    log_callback("Tela base de contratos validada")
+
+
 def esperar_download(pasta_download, contrato, log_callback, timeout=60):
     inicio = time.time()
     log_callback(f"Aguardando download do contrato {contrato}...")
@@ -156,14 +169,8 @@ def esperar_download(pasta_download, contrato, log_callback, timeout=60):
 def buscar(driver, numero, log_callback):
     wait = WebDriverWait(driver, 15)
     try:
-        driver.find_element(By.XPATH, "/html/body/foco-app/div[1]/div/ul/li[5]/a/i").click()
-        time.sleep(1)
-        driver.find_element(By.XPATH, '//*[@id="tab-ra-list"]').click()
-        time.sleep(1.5)
-        campo = driver.find_element(
-            By.XPATH,
-            "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input",
-        )
+        ir_para_tela_contratos(driver, log_callback)
+        campo = wait.until(EC.presence_of_element_located((By.XPATH, XPATH_CAMPO_BUSCA_CONTRATOS)))
         campo.clear()
         campo.send_keys(numero)
         campo.send_keys(Keys.ENTER)
@@ -292,8 +299,7 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
 
                 progress_callback((i / total) * 100)
 
-                driver.get("https://coral.aluguefoco.com.br/dashboard")
-                time.sleep(2.0)
+                ir_para_tela_contratos(driver, log_callback)
 
             except Exception as e:
                 erro = str(e)

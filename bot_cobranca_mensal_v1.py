@@ -84,6 +84,7 @@ class RoboCobrancaMensalApp:
     SOFT_RED = "#fff1ef"
 
     URL_BASE = "https://coral.aluguefoco.com.br/"
+    URL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
     URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
     URL_WHATSAPP_WEB = "https://web.whatsapp.com/"
 
@@ -1323,7 +1324,7 @@ class RoboCobrancaMensalApp:
         self.adicionar_log("Indo para a tela base de contratos...")
         if not self.esta_logado():
             self.recuperar_sessao()
-        self.clicar_seguro(By.XPATH, self.XPATH_MENU_CONTRATOS, "menu Contratos", timeout=self.TIMEOUT_PADRAO)
+        self.driver.get(self.URL_CONTRATOS)
         self.esperar_visivel(By.XPATH, self.XPATH_ABA_CONTRATOS, timeout=self.TIMEOUT_PADRAO)
         self.clicar_seguro(By.XPATH, self.XPATH_ABA_CONTRATOS, "aba Contratos", timeout=self.TIMEOUT_PADRAO)
         self.validar_tela_contratos()
@@ -1368,8 +1369,6 @@ class RoboCobrancaMensalApp:
             except Exception as e:
                 self.adicionar_log(f"Falha na busca do contrato {numero_contrato}: {e}")
                 if tentativa < tentativas:
-                    self.reset_completo_navegador(f"Falha na busca do contrato {numero_contrato}")
-                    self.abrir_sistema(relogin=True)
                     self.ir_para_contratos()
                 else:
                     raise
@@ -2143,8 +2142,7 @@ Checkout - Foco Aluguel de Carros"""
                 self.verificar_controle_execucao()
                 self.adicionar_log(f"Processando contrato {numero_contrato} - tentativa {tentativa}/{self.MAX_TENTATIVAS_ITEM}")
                 if tentativa > 1:
-                    self.reset_completo_navegador(f"Nova tentativa do contrato {numero_contrato}")
-                    self.abrir_sistema(relogin=True)
+                    self.ir_para_contratos()
                 resultado = self.processar_contrato_com_cobranca(numero_contrato, valor_pagamento)
                 resultado["tentativas"] = tentativa
                 return resultado
@@ -2155,7 +2153,11 @@ Checkout - Foco Aluguel de Carros"""
             except Exception as e:
                 self.adicionar_log(f"Falha no contrato {numero_contrato} na tentativa {tentativa}: {e}")
                 if tentativa < self.MAX_TENTATIVAS_ITEM:
-                    self.adicionar_log("Como o Coral não recupera bem depois de falhar nessa etapa, o navegador será reiniciado antes da próxima tentativa.")
+                    self.adicionar_log("Retornando para a URL base de contratos antes da próxima tentativa.")
+                    try:
+                        self.ir_para_contratos()
+                    except Exception as erro_base:
+                        self.adicionar_log(f"Falha ao retornar para tela base de contratos: {erro_base}")
                     continue
                 raise
 
@@ -2280,8 +2282,7 @@ Checkout - Foco Aluguel de Carros"""
                     status_final = "Revisar Manualmente"
                     erro_msg = str(e)
                     self.adicionar_log(f"REVISÃO MANUAL no contrato {contrato}: {str(e)}")
-                    self.reset_completo_navegador(f"Revisão manual no contrato {contrato}")
-                    self.abrir_sistema(relogin=True)
+                    self.ir_para_contratos()
 
                 except ExecucaoInterrompida as e:
                     tentativas_item = max(tentativas_item, 1)
@@ -2301,8 +2302,7 @@ Checkout - Foco Aluguel de Carros"""
                     self.total_erros_execucao += 1
                     self.atualizar_resumo_execucao()
                     self.adicionar_log(f"ERRO definitivo no contrato {contrato}: {str(e)}")
-                    self.reset_completo_navegador(f"Erro definitivo no contrato {contrato}")
-                    self.abrir_sistema(relogin=True)
+                    self.ir_para_contratos()
 
                 finally:
                     telefone = "" if self.valor_vazio(linha.get("Telefone")) else str(linha.get("Telefone")).strip()
@@ -2328,10 +2328,9 @@ Checkout - Foco Aluguel de Carros"""
                     if resetar_navegador_apos_relatorio and not self.parar_solicitado and i < self.total_aptos:
                         self.adicionar_log(
                             "Link gerado deixa o Coral em tela de aguardando pagamento. "
-                            "Reiniciando navegador antes do próximo contrato..."
+                            "Retornando para a tela base de contratos antes do próximo contrato..."
                         )
-                        self.reset_completo_navegador(f"Link gerado no contrato {contrato}")
-                        self.abrir_sistema(relogin=True)
+                        self.ir_para_contratos()
 
                 if self.parar_solicitado:
                     break

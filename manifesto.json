@@ -18,17 +18,37 @@
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
     "classe": "BillingApp",
-    "versao": "1.0.14"
+    "versao": "1.0.18",
+    "constructor_mode": "external_process",
+    "title": "Robo de Faturamento",
+    "geometry": "1180x760",
+    "resizable": true,
+    "card_title": "Faturamento",
+    "description": "Faturamento de avarias no Protheus com validacao da planilha, progresso e relatorio em tempo real.",
+    "tutorial_file": "tutorial_faturamento.txt"
   },
   "cobcloud": {
     "arquivo": "robo_cobcloud.py",
     "classe": "RoboCobCloudApp",
-    "versao": "1.0.4",
+    "versao": "1.0.3",
     "constructor_mode": "external_process",
     "title": "Robo CobCloud",
     "geometry": "980x760",
     "resizable": true,
     "card_title": "CobCloud",
-    "description": "Negativacao de cadastros sem endereco no CobCloud, com checkpoint e relatorio em tempo real."
+    "description": "Negativacao de cadastros sem endereco no CobCloud, com checkpoint e relatorio em tempo real.",
+    "tutorial_file": "tutorial_cobcloud.txt"
+  },
+  "cobranca_cartoes": {
+    "arquivo": "robo_cobranca_cartoes_v1.py",
+    "classe": "RoboCobrancaCartoesApp",
+    "versao": "1.0.1",
+    "constructor_mode": "external_process",
+    "title": "Robo de Cobranca de Cartoes",
+    "geometry": "1120x760",
+    "resizable": true,
+    "card_title": "Cartoes",
+    "description": "Cobranca de contratos pendentes por cartao no Coral, com relatorio em tempo real.",
+    "tutorial_file": "tutorial_cobranca_cartoes.txt"
   }
 }

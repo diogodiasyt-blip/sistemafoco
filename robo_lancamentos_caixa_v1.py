@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import os
+import random
 import re
 import threading
 import time
@@ -164,6 +165,24 @@ def _format_brl(value: float) -> str:
     return text.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _format_totvs_money(value: float) -> str:
+    return f"{float(value):.2f}".replace(".", ",")
+
+
+def _generate_expense_title_number() -> str:
+    return f"DESP{random.randint(0, 99999):05d}"
+
+
+def _expense_account_for_type(tipo_despesa: str) -> str | None:
+    tipo_norm = _normalize_text(tipo_despesa)
+    if tipo_norm in EXPENSE_ACCOUNT_MAP:
+        return EXPENSE_ACCOUNT_MAP[tipo_norm]
+    for key, account in EXPENSE_ACCOUNT_MAP.items():
+        if key in tipo_norm or tipo_norm in key:
+            return account
+    return None
+
+
 def _normalize_store_code(value: str) -> str:
     store = _normalize_text(value)
     if store == "SAO11":
@@ -179,6 +198,32 @@ def _resolve_cash_guide_path() -> Path:
         base_dir.parent / "assets" / "CADASTRO_LOJA_CASH.xlsx",
         Path.cwd() / "DESENVOLVIMENTO" / "assets" / "CADASTRO_LOJA_CASH.xlsx",
         Path.cwd() / "assets" / "CADASTRO_LOJA_CASH.xlsx",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def _resolve_expense_client_guide_path() -> Path:
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        base_dir.parent / "assets" / "CADASTRO_CLIENTE_DESPESAS.xlsx",
+        Path.cwd() / "DESENVOLVIMENTO" / "assets" / "CADASTRO_CLIENTE_DESPESAS.xlsx",
+        Path.cwd() / "assets" / "CADASTRO_CLIENTE_DESPESAS.xlsx",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def _resolve_expense_rateio_path() -> Path:
+    base_dir = Path(__file__).resolve().parent
+    candidates = [
+        base_dir.parent / "assets" / "DESPESAS.xlsx",
+        Path.cwd() / "DESENVOLVIMENTO" / "assets" / "DESPESAS.xlsx",
+        Path.cwd() / "assets" / "DESPESAS.xlsx",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -223,6 +268,23 @@ class CashGroup:
     row_numbers: list[int]
 
 
+@dataclass
+class ExpenseGroup:
+    loja: str
+    tipo_despesa: str
+    tipos_despesa: list[str]
+    contas_por_tipo: dict[str, str]
+    descricao: str
+    cliente_codigo: str
+    valor_total: float
+    periodo: str
+    row_numbers: list[int]
+
+    @property
+    def precisa_rateio(self) -> bool:
+        return len(self.tipos_despesa) > 1
+
+
 CASH_FIELD_LABELS = {
     "prefixo": "Prefixo",
     "tipo": "Tipo",
@@ -236,6 +298,56 @@ CASH_FIELD_LABELS = {
     "cliente": "Cliente",
     "conta_baixa": "Conta da baixa",
 }
+
+CASH_FIELD_MAP = {
+    "prefixo": {"protheus_name": "E1_PREFIXO", "tag": "wa-text-input"},
+    "tipo_pg": {"protheus_name": "E1_XTIPOPG", "tag": "wa-combobox"},
+    "tipo": {"protheus_name": "E1_TIPO", "tag": "wa-text-input"},
+    "natureza": {"protheus_name": "E1_NATUREZ", "tag": "wa-text-input"},
+    "cliente": {"protheus_name": "E1_CLIENTE", "tag": "wa-text-input"},
+    "data_emissao": {"protheus_name": "E1_EMISSAO", "tag": "wa-text-input"},
+    "vencimento": {"protheus_name": "E1_VENCTO", "tag": "wa-text-input"},
+    "valor_titulo": {"protheus_name": "E1_VALOR", "tag": "wa-text-input"},
+    "centro_custo": {"protheus_name": "E1_CCUSTO", "tag": "wa-text-input"},
+    "negocio": {"protheus_name": "E1_NEGOCIO", "tag": "wa-combobox"},
+    "segregacao": {"protheus_name": "E1_XSEGREG", "tag": "wa-text-input"},
+    "motivo": {"protheus_name": "E1_MOTIVO2", "tag": "wa-combobox"},
+    "historico": {"protheus_name": "E1_HIST", "tag": "wa-text-input"},
+}
+
+EXPENSE_FIELD_LABELS = {
+    "numero_titulo": "Numero do Titulo",
+    "tipo_titulo": "Tipo do Titulo",
+    "natureza": "Codigo da natureza",
+    "fornecedor": "Fornecedor",
+    "data_emissao": "Data emissao",
+    "vencimento": "Vencimento",
+    "valor": "Valor",
+    "historico": "Historico",
+    "rateio": "Rateio",
+    "conta_contabil": "Conta contabil",
+    "centro_custo": "Centro de custo",
+    "forma_pagamento": "Forma de pagamento",
+}
+
+EXPENSE_ACCOUNT_MAP = {
+    "ESTORNOS REEMBOLSOS": "3102020003",
+    "REEMBOLSOS": "3102020003",
+    "COMBUSTIVEIS E LUBRIFICANTES": "4101010004",
+    "ESTACIONAMENTO": "4101010016",
+    "DESPESAS COM ESCRITORIOS": "4101010022",
+    "DESPESAS DE ESCRITORIO": "4101010022",
+    "EVENTOS E CONFRATERNIZACOES": "4101010025",
+    "MANUTENCAO DE EQUIPAMENTO": "4101010051",
+    "MATERIAL E SERVICOS DE LIMPEZA": "4101010056",
+    "OUTROS GASTOS COM FROTA": "4101010061",
+    "CORREIOS E MALOTES": "4101010050",
+    "CORREIO E MALOTE": "4101010050",
+    "VIAGENS AEREO HOSPEDAGEM ALIMENTACAO": "4101010024",
+    "SERVICOS DE TERCEIROS": "4101010027",
+}
+DEFAULT_EXPENSE_ACCOUNT = "4101010022"
+DEFAULT_EXPENSE_ACCOUNT_DESCRIPTION = "DESPESAS COM ESCRITORIOS"
 
 HELP_FIELD_PATTERNS = {
     "tipo": ("E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
@@ -330,6 +442,20 @@ class TotvsCaixaLoginBot:
                     page.locator('wa-menu-item[caption*="Funções Contas a Receber"]'),
                     page.get_by_text("Funcoes Contas a Receber", exact=False),
                     page.get_by_text("Funções Contas a Receber", exact=False),
+                ]
+            )
+        elif "FUNCOES CONTAS A PAGAR" in label_norm:
+            locators.extend(
+                [
+                    page.get_by_title("Funcoes Contas a Pagar"),
+                    page.get_by_title("Funções Contas a Pagar"),
+                    page.get_by_title("FunÃ§Ãµes Contas a Pagar"),
+                    page.locator('wa-menu-item[caption*="Funcoes Contas a Pagar"]'),
+                    page.locator('wa-menu-item[caption*="Funções Contas a Pagar"]'),
+                    page.locator('wa-menu-item[caption*="FunÃ§Ãµes Contas a Pagar"]'),
+                    page.get_by_text("Funcoes Contas a Pagar", exact=False),
+                    page.get_by_text("Funções Contas a Pagar", exact=False),
+                    page.get_by_text("FunÃ§Ãµes Contas a Pagar", exact=False),
                 ]
             )
         elif "OUTRAS ACOES" in label_norm:
@@ -451,6 +577,20 @@ class TotvsCaixaLoginBot:
         self.wait_until_billing_screen()
         self.log("Tela de faturamento aberta para lancamento de Cash.")
 
+    def open_expense_entry_screen(self) -> None:
+        if self.page is None:
+            raise RuntimeError("Pagina do TOTVS nao foi inicializada.")
+
+        self.log("Abrindo modulo de Despesas em Contas a Pagar...")
+        self._navigate_to_contas_pagar()
+        self._click_when_clickable(self.page.get_by_title("Funções Contas a Pagar"), "Funcoes Contas a Pagar")
+        self._click_cancelar_contas_pagar_menu()
+        self._click_ctas_pagar_button()
+        self._click_incluir_menu()
+        self._finalize_incluir()
+        self.wait_until_payable_screen()
+        self.log("Tela de Contas a Pagar aberta para lancamento de Despesas.")
+
     def _navigate_to_contas_receber(self) -> None:
         page = self._require_page()
         contas_candidates = [
@@ -476,6 +616,30 @@ class TotvsCaixaLoginBot:
 
         raise RuntimeError("Nenhum caminho de navegacao para Contas a Receber funcionou no menu do Protheus.")
 
+    def _navigate_to_contas_pagar(self) -> None:
+        page = self._require_page()
+        self._click_first_visible_locator(
+            [
+                page.get_by_text("Atualizações (17)", exact=True),
+                page.get_by_text("Atualizacoes (17)", exact=True),
+                page.get_by_text(re.compile(r"Atualiza..es\s*\(\d+\)", re.I)),
+                page.get_by_text("Atualiza", exact=False),
+            ],
+            timeout=45000,
+            pause_ms=1000,
+            label="Atualizacoes",
+        )
+        self._click_first_visible_locator(
+            [
+                page.get_by_text("Contas a Pagar (22)", exact=True),
+                page.get_by_text(re.compile(r"Contas a Pagar\s*\(\d+\)", re.I)),
+                page.get_by_text("Contas a Pagar", exact=False),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Contas a Pagar",
+        )
+
     def _click_ctas_receber_button(self) -> None:
         page = self._require_page()
         self._click_first_visible_locator(
@@ -487,6 +651,33 @@ class TotvsCaixaLoginBot:
             timeout=45000,
             pause_ms=1200,
             label="Ctas a Receber",
+        )
+
+    def _click_ctas_pagar_button(self) -> None:
+        page = self._require_page()
+        self._click_first_visible_locator(
+            [
+                page.get_by_role("button", name="Ctas a Pagar"),
+                page.get_by_role("button", name="Contas a Pagar"),
+                page.locator('wa-button[caption*="Ctas a Pagar"]'),
+                page.locator('wa-button[caption*="Contas a Pagar"]'),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Ctas a Pagar",
+        )
+
+    def _click_cancelar_contas_pagar_menu(self) -> None:
+        page = self._require_page()
+        self._click_first_visible_locator(
+            [
+                page.get_by_role("button", name="Cancelar"),
+                page.locator('wa-button[caption="Cancelar"]'),
+                page.get_by_text("Cancelar", exact=True),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Cancelar menu Contas a Pagar",
         )
 
     def _click_incluir_menu(self) -> None:
@@ -548,10 +739,43 @@ class TotvsCaixaLoginBot:
         )
         self.page.wait_for_timeout(500)
 
+    def wait_until_payable_screen(self) -> None:
+        if self.page is None:
+            raise RuntimeError("Pagina do TOTVS nao foi inicializada.")
+        dialog = self._payable_dialog()
+        self._wait_any_visible(
+            [
+                dialog.locator('wa-text-view[caption="Contas a Pagar"]'),
+                dialog.get_by_text("Contas a Pagar", exact=False),
+                dialog.get_by_role("button", name=re.compile("Dados Gerais|D ados Gerais", re.I)),
+            ],
+            timeout=60000,
+        )
+        self._wait_any_visible(
+            [
+                dialog.get_by_role("button", name="Salvar"),
+                dialog.locator('wa-button[caption="Salvar"]'),
+            ],
+            timeout=45000,
+        )
+        self.page.wait_for_timeout(500)
+
     def _billing_dialog(self):
         page = self._require_page()
         dialog = page.locator('wa-dialog.dict-msdialog[title="Contas a Receber"][opened]').last
         dialog.wait_for(state="visible", timeout=45000)
+        return dialog
+
+    def _payable_dialog(self):
+        page = self._require_page()
+        candidates = [
+            page.locator('wa-dialog.dict-msdialog[title="Contas a Pagar"][opened]').last,
+            page.locator('wa-dialog[title="Contas a Pagar"][opened]').last,
+            page.locator('wa-dialog.dict-msdialog[opened]').filter(has_text="Contas a Pagar").last,
+        ]
+        dialog = self._wait_for_first_visible_locator(candidates, timeout=60000)
+        if dialog is None:
+            raise RuntimeError("Tela de Contas a Pagar nao foi localizada.")
         return dialog
 
     def _fill_text_field(
@@ -578,8 +802,72 @@ class TotvsCaixaLoginBot:
         raise RuntimeError(f"Nao foi possivel preencher {label}. Ultima falha: {last_error}")
 
     def _select_option(self, locator, label: str, option: str) -> None:
-        self._select_combo_option(locator, option)
+        self._select_combo_option(locator, option, label=label)
         self.log(f"Campo {label} selecionado: {option}.")
+
+    @staticmethod
+    def _build_cash_field_selector(field_key: str) -> str:
+        field = CASH_FIELD_MAP[field_key]
+        return f'{field["tag"]}[name="M->{field["protheus_name"]}"]'
+
+    def _cash_field_locator(self, dialog, field_key: str, fallbacks: list | None = None):
+        selector = self._build_cash_field_selector(field_key)
+        candidates = [dialog.locator(selector).last]
+        if fallbacks:
+            candidates.extend(fallbacks)
+        locator = self._first_visible_locator(candidates)
+        if locator is None:
+            raise RuntimeError(
+                f"Campo {CASH_FIELD_LABELS.get(field_key, field_key)} nao foi localizado pelo identificador interno do TOTVS ({selector})."
+            )
+        return locator
+
+    def _expense_field_locator(self, dialog, field_key: str):
+        page = self._require_page()
+        locators = {
+            "numero_titulo": [
+                dialog.get_by_title("Numero do Titulo         ").get_by_role("textbox"),
+                page.get_by_title("Numero do Titulo         ").get_by_role("textbox"),
+            ],
+            "tipo_titulo": [
+                dialog.get_by_title("Tipo do Titulo           ").get_by_role("textbox"),
+                page.get_by_title("Tipo do Titulo           ").get_by_role("textbox"),
+            ],
+            "natureza": [
+                dialog.get_by_title("Codigo da natureza       ").get_by_role("textbox"),
+                page.get_by_title("Codigo da natureza       ").get_by_role("textbox"),
+            ],
+            "fornecedor": [dialog.locator("#COMP6022 > input"), page.locator("#COMP6022 > input")],
+            "data_emissao": [dialog.locator("#COMP6025 > input"), page.locator("#COMP6025 > input")],
+            "vencimento": [dialog.locator("#COMP6026 > input"), page.locator("#COMP6026 > input")],
+            "valor": [dialog.locator("#COMP6028 > input"), page.locator("#COMP6028 > input")],
+            "historico": [dialog.locator("#COMP6029 > input"), page.locator("#COMP6029 > input")],
+            "rateio": [dialog.get_by_role("combobox"), page.get_by_role("combobox")],
+            "conta_contabil": [dialog.locator("#COMP6035 > input"), page.locator("#COMP6035 > input")],
+            "centro_custo": [dialog.locator("#COMP6038 > input"), page.locator("#COMP6038 > input")],
+            "forma_pagamento": [dialog.locator("#COMP6040 > input"), page.locator("#COMP6040 > input")],
+        }
+        locator = self._first_visible_locator(locators.get(field_key, []))
+        if locator is None:
+            raise RuntimeError(f"Campo {EXPENSE_FIELD_LABELS.get(field_key, field_key)} nao foi localizado.")
+        return locator
+
+    def _wait_first_visible_locator(self, locators: list, timeout_ms: int = 45000, interval_ms: int = 500):
+        page = self._require_page()
+        deadline = time.time() + (timeout_ms / 1000)
+        last_error = ""
+        while time.time() < deadline:
+            for locator in locators:
+                try:
+                    if locator.count() > 0 and locator.first.is_visible():
+                        return locator.first
+                except Exception as exc:
+                    last_error = str(exc)
+                    continue
+            page.wait_for_timeout(interval_ms)
+        if last_error:
+            self.log(f"Ultima falha ao aguardar campo: {last_error}")
+        return None
 
     def _click_and_fill_field(
         self,
@@ -599,22 +887,14 @@ class TotvsCaixaLoginBot:
         for attempt in range(1, attempts + 1):
             locator.wait_for(state="visible", timeout=timeout)
             locator.scroll_into_view_if_needed(timeout=3000)
-            focused = self._focus_host_input(locator)
-            if not focused:
-                locator.click(force=True)
+            if not self._focus_and_verify_host_input(locator):
+                raise RuntimeError(f"Nao foi possivel confirmar foco no campo {CASH_FIELD_LABELS.get(field_key or '', field_key or 'campo')}.")
             page.wait_for_timeout(250)
 
             try:
-                if focused:
-                    self._fill_host_input(locator, expected, dismiss_popup=False)
-                else:
-                    page.keyboard.press("Control+A")
-                    page.wait_for_timeout(100)
-                    page.keyboard.press("Backspace")
-                    page.wait_for_timeout(100)
-                    page.keyboard.type(expected, delay=100)
+                self._clipboard_fill_locator(locator, expected)
             except Exception:
-                self._fill_host_input(locator, expected, dismiss_popup=False)
+                self._keyboard_fill_locator(locator, expected)
 
             if settle_locator is not None:
                 self._stabilize_on_previous_field(settle_locator, field_key)
@@ -642,6 +922,52 @@ class TotvsCaixaLoginBot:
 
         label = CASH_FIELD_LABELS.get(field_key or "", field_key or "campo")
         raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
+
+    def _clipboard_fill_locator(self, locator, value: str) -> None:
+        page = self._require_page()
+        locator.wait_for(state="visible", timeout=45000)
+        locator.scroll_into_view_if_needed(timeout=3000)
+        if not self._focus_and_verify_host_input(locator):
+            raise RuntimeError("Nao foi possivel focar o campo correto antes de colar.")
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(120)
+        self._set_clipboard_text(str(value))
+        page.keyboard.press("Control+V")
+        page.wait_for_timeout(650)
+
+    def _set_clipboard_text(self, value: str) -> None:
+        page = self._require_page()
+        try:
+            page.evaluate("async (text) => await navigator.clipboard.writeText(text)", value)
+            return
+        except Exception:
+            pass
+        try:
+            import tkinter as _tk
+
+            root = _tk.Tk()
+            root.withdraw()
+            root.clipboard_clear()
+            root.clipboard_append(value)
+            root.update()
+            root.destroy()
+            return
+        except Exception:
+            pass
+        raise RuntimeError("Nao foi possivel gravar o valor na area de transferencia.")
+
+    def _keyboard_fill_locator(self, locator, value: str) -> None:
+        page = self._require_page()
+        locator.wait_for(state="visible", timeout=45000)
+        locator.scroll_into_view_if_needed(timeout=3000)
+        if not self._focus_and_verify_host_input(locator):
+            raise RuntimeError("Nao foi possivel focar o campo correto antes de preencher.")
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(120)
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(120)
+        page.keyboard.insert_text(str(value))
+        page.wait_for_timeout(500)
 
     def _stabilize_on_previous_field(self, locator, current_field_key: str | None = None) -> None:
         page = self._require_page()
@@ -684,6 +1010,48 @@ class TotvsCaixaLoginBot:
             )
         except Exception:
             return False
+
+    def _focus_and_verify_host_input(self, locator) -> bool:
+        if locator is None:
+            return False
+        for _ in range(3):
+            try:
+                locator.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            try:
+                locator.click(timeout=3000)
+            except Exception:
+                try:
+                    locator.click(force=True, timeout=3000)
+                except Exception:
+                    pass
+            try:
+                focused = bool(
+                    locator.evaluate(
+                        """
+                        (host) => {
+                            const root = host.shadowRoot || host;
+                            const input =
+                                root.querySelector('input') ||
+                                root.querySelector('textarea') ||
+                                host.querySelector('input') ||
+                                host.querySelector('textarea') ||
+                                (host.tagName && host.tagName.toLowerCase() === 'input' ? host : null);
+                            if (!input) return false;
+                            input.focus();
+                            const active = root.activeElement || document.activeElement;
+                            return active === input || document.activeElement === host || document.activeElement === input;
+                        }
+                        """
+                    )
+                )
+                if focused:
+                    return True
+            except Exception:
+                pass
+            self._require_page().wait_for_timeout(200)
+        return False
 
     def _fill_host_input(self, locator, value: str, dismiss_popup: bool = True) -> None:
         page = self._require_page()
@@ -729,14 +1097,106 @@ class TotvsCaixaLoginBot:
         if dismiss_popup:
             self._dismiss_help_popup_if_present()
 
-    def _select_combo_option(self, locator, value: str) -> None:
+    def _select_combo_option(self, locator, value: str, label: str = "") -> None:
         if locator is None:
             raise RuntimeError("Combobox nao localizado.")
+        page = self._require_page()
         locator.wait_for(state="visible", timeout=45000)
         locator.scroll_into_view_if_needed(timeout=3000)
-        locator.select_option(str(value))
-        self._require_page().wait_for_timeout(800)
+
+        try:
+            locator.select_option(str(value))
+            page.wait_for_timeout(800)
+            self._dismiss_help_popup_if_present()
+            return
+        except Exception:
+            pass
+
+        if self._set_totvs_combobox_value(locator, str(value)):
+            page.wait_for_timeout(800)
+            self._dismiss_help_popup_if_present()
+            return
+
+        locator.click(force=True)
+        page.wait_for_timeout(250)
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(100)
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(100)
+        try:
+            self._set_clipboard_text(str(value))
+            page.keyboard.press("Control+V")
+        except Exception:
+            page.keyboard.insert_text(str(value))
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(800)
         self._dismiss_help_popup_if_present()
+
+    def _set_totvs_combobox_value(self, locator, value: str) -> bool:
+        try:
+            return bool(
+                locator.evaluate(
+                    """
+                    (node, rawValue) => {
+                        const value = String(rawValue);
+                        const selectedIndex = Number.parseInt(value, 10);
+                        const combo = node.closest && node.closest('wa-combobox')
+                            ? node.closest('wa-combobox')
+                            : node;
+                        if (!combo) return false;
+
+                        const applyValue = (target) => {
+                            if (!target) return;
+                            try { target.value = value; } catch (error) {}
+                            try { target.selectedIndex = selectedIndex; } catch (error) {}
+                            try { target.selectedindex = selectedIndex; } catch (error) {}
+                            try { target.setAttribute('value', value); } catch (error) {}
+                            try { target.setAttribute('selectedindex', value); } catch (error) {}
+                            try { target.setAttribute('selectedIndex', value); } catch (error) {}
+                            try {
+                                target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                                target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                                target.dispatchEvent(
+                                    new CustomEvent('change', {
+                                        bubbles: true,
+                                        composed: true,
+                                        detail: { value, selectedIndex },
+                                    })
+                                );
+                            } catch (error) {}
+                        };
+
+                        applyValue(combo);
+
+                        const root = combo.shadowRoot || combo;
+                        const input =
+                            root.querySelector('input') ||
+                            root.querySelector('[contenteditable="true"]') ||
+                            combo.querySelector('input');
+                        if (input) {
+                            input.focus();
+                            applyValue(input);
+                        }
+
+                        const button =
+                            root.querySelector('button') ||
+                            root.querySelector('[role="button"]') ||
+                            combo.querySelector('button');
+                        if (button) {
+                            try { button.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (error) {}
+                        }
+
+                        return true;
+                    }
+                    """,
+                    value,
+                )
+            )
+        except Exception:
+            return False
 
     def _dismiss_help_popup_if_present(self) -> str | None:
         page = self._require_page()
@@ -893,45 +1353,282 @@ class TotvsCaixaLoginBot:
         dialog = self._billing_dialog()
         self.log(f"Preenchendo Cash da loja {group.loja} no valor R$ {_format_brl(group.valor_total)}.")
 
-        self._fill_first_available(
+        prefixo_input = self._cash_field_locator(dialog, "prefixo")
+        tipo_pg_combo = self._first_visible_locator(
             [
-                dialog.get_by_title(re.compile("Prefixo", re.I)).get_by_role("textbox"),
-                dialog.locator("#COMP6021 > input"),
-            ],
-            "Prefixo",
-            "DH",
-        )
-        prefixo_input = self._first_visible_locator(
-            [
-                dialog.get_by_title(re.compile("Prefixo", re.I)).get_by_role("textbox"),
-                dialog.locator("#COMP6021 > input"),
+                dialog.get_by_title("Tipo de pagamento        ").get_by_role("combobox"),
+                self.page.get_by_title("Tipo de pagamento        ").get_by_role("combobox"),
+                self._cash_field_locator(dialog, "tipo_pg"),
             ]
         )
-        tipo_input = dialog.get_by_title("Tipo do titulo           ").get_by_role("textbox")
-        data_emissao_input = dialog.locator("#COMP6029 > input")
-        vencimento_input = dialog.locator("#COMP6030 > input")
-        valor_input = dialog.locator("#COMP6032 > input")
-        centro_custo_input = dialog.locator("#COMP6036 > input")
-        segregacao_input = dialog.locator("#COMP6038 > input")
-        historico_input = dialog.locator("#COMP6040 > input")
-        natureza_input = dialog.locator("#COMP6023 > input")
-        cliente_input = dialog.locator("#COMP6025 > input")
+        if tipo_pg_combo is None:
+            raise RuntimeError("Campo Tipo de pagamento nao foi localizado.")
+        tipo_input = self._cash_field_locator(dialog, "tipo")
+        data_emissao_input = self._cash_field_locator(dialog, "data_emissao")
+        vencimento_input = self._cash_field_locator(dialog, "vencimento")
+        valor_input = self._cash_field_locator(dialog, "valor_titulo")
+        centro_custo_input = self._cash_field_locator(dialog, "centro_custo")
+        negocio_combo = self._first_visible_locator(
+            [
+                dialog.get_by_title("Negocio                  ").get_by_role("combobox"),
+                self.page.get_by_title("Negocio                  ").get_by_role("combobox"),
+                self._cash_field_locator(dialog, "negocio"),
+            ]
+        )
+        if negocio_combo is None:
+            raise RuntimeError("Campo Negocio nao foi localizado.")
+        segregacao_input = self._cash_field_locator(dialog, "segregacao")
+        motivo_combo = self._first_visible_locator(
+            [
+                dialog.get_by_title("Motivo                   ").get_by_role("combobox"),
+                self.page.get_by_title("Motivo                   ").get_by_role("combobox"),
+                self._cash_field_locator(dialog, "motivo"),
+            ]
+        )
+        if motivo_combo is None:
+            raise RuntimeError("Campo Motivo nao foi localizado.")
+        historico_input = self._cash_field_locator(dialog, "historico")
+        natureza_input = self._cash_field_locator(dialog, "natureza")
+        cliente_input = self._cash_field_locator(
+            dialog,
+            "cliente",
+            fallbacks=[
+                dialog.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-tab-view/wa-tab-page[1]/wa-panel/wa-panel/wa-text-input[7]"
+                ),
+                dialog.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-tab-view/wa-tab-page[1]/wa-panel/wa-panel/wa-text-input[7]//input"
+                ),
+                self.page.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-tab-view/wa-tab-page[1]/wa-panel/wa-panel/wa-text-input[7]"
+                ),
+                self.page.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-tab-view/wa-tab-page[1]/wa-panel/wa-panel/wa-text-input[7]//input"
+                ),
+            ],
+        )
 
+        self._fill_text_field(prefixo_input, "Prefixo", "DH", field_key="prefixo", settle_locator=prefixo_input)
         self._fill_text_field(tipo_input, "Tipo", "R$", field_key="tipo", settle_locator=prefixo_input)
         self._fill_text_field(data_emissao_input, "Data de emissao", issue_date, field_key="data_emissao", settle_locator=tipo_input)
         self._fill_text_field(vencimento_input, "Vencimento", issue_date, field_key="vencimento", settle_locator=data_emissao_input)
-        self._fill_text_field(valor_input, "Valor do titulo", _format_brl(group.valor_total), field_key="valor_titulo", settle_locator=vencimento_input)
+        self._fill_text_field(valor_input, "Valor do titulo", _format_totvs_money(group.valor_total), field_key="valor_titulo", settle_locator=vencimento_input)
         self._fill_text_field(centro_custo_input, "Centro de custo", group.loja, field_key="centro_custo", settle_locator=valor_input)
-        self._select_option(dialog.get_by_title("Negocio                  ").get_by_role("combobox"), "Negocio", "3")
+        self._select_option(negocio_combo, "Negocio", "3")
         self._stabilize_on_previous_field(centro_custo_input, "negocio")
         self._fill_text_field(segregacao_input, "Segregacao", "FIL", field_key="segregacao", settle_locator=centro_custo_input)
-        self._select_option(dialog.get_by_title("Motivo                   ").get_by_role("combobox"), "Motivo", "6")
+        self._select_option(motivo_combo, "Motivo", "6")
         self._stabilize_on_previous_field(segregacao_input, "motivo")
         self._fill_text_field(historico_input, "Historico", f"RECEITA DE {group.periodo} - {group.loja}", field_key="historico", settle_locator=segregacao_input)
-        self._select_option(dialog.get_by_title("Tipo de pagamento        ").get_by_role("combobox"), "Tipo de pagamento", "2")
+        self._select_option(tipo_pg_combo, "Tipo de pagamento", "2")
         self._stabilize_on_previous_field(historico_input, "tipo_pagamento")
         self._fill_text_field(natureza_input, "Natureza", "RECEITA LJ", field_key="natureza", settle_locator=historico_input)
-        self._fill_text_field(cliente_input, "Cliente", group.cliente_codigo, field_key="cliente", settle_locator=natureza_input)
+        self.log(f"Cliente guia para loja {group.loja}: {group.cliente_codigo}.")
+        self._fill_text_field(cliente_input, "Cliente", 
+        cliente_codigo, field_key="cliente", settle_locator=natureza_input)
+
+    def prepare_expense_title_fields(self, group: ExpenseGroup, issue_date: str) -> dict[str, object]:
+        if self.page is None:
+            raise RuntimeError("Pagina do TOTVS nao foi inicializada.")
+
+        self.wait_until_payable_screen()
+        dialog = self._payable_dialog()
+        self.log(f"Preparando campos de Despesa da loja {group.loja} no valor R$ {_format_brl(group.valor_total)}.")
+        return {
+            "numero_titulo": self._expense_field_locator(dialog, "numero_titulo"),
+            "tipo_titulo": self._expense_field_locator(dialog, "tipo_titulo"),
+            "natureza": self._expense_field_locator(dialog, "natureza"),
+            "fornecedor": self._expense_field_locator(dialog, "fornecedor"),
+            "data_emissao": self._expense_field_locator(dialog, "data_emissao"),
+            "vencimento": self._expense_field_locator(dialog, "vencimento"),
+            "valor": self._expense_field_locator(dialog, "valor"),
+            "historico": self._expense_field_locator(dialog, "historico"),
+            "rateio": self._expense_field_locator(dialog, "rateio"),
+            "conta_contabil": self._expense_field_locator(dialog, "conta_contabil"),
+            "centro_custo": self._expense_field_locator(dialog, "centro_custo"),
+            "forma_pagamento": self._expense_field_locator(dialog, "forma_pagamento"),
+        }
+
+    def fill_expense_title_basic(self, group: ExpenseGroup, issue_date: str) -> None:
+        fields = self.prepare_expense_title_fields(group, issue_date)
+        title_number = _generate_expense_title_number()
+        historico = f"DESPESAS {group.periodo} - {group.loja}"
+        if group.descricao:
+            historico = f"{historico} - {group.tipo_despesa}"
+
+        self.log(f"Numero do titulo gerado para despesa: {title_number}.")
+        self._fill_text_field(fields["numero_titulo"], "Numero do Titulo", title_number, settle_locator=fields["numero_titulo"])
+        self._fill_text_field(fields["tipo_titulo"], "Tipo do Titulo", "R$", settle_locator=fields["numero_titulo"])
+        self._fill_text_field(fields["natureza"], "Codigo da natureza", "DESPESA LJ", settle_locator=fields["numero_titulo"])
+
+        if group.cliente_codigo:
+            self._fill_text_field(fields["fornecedor"], "Fornecedor", group.cliente_codigo, settle_locator=fields["natureza"])
+
+        self._fill_text_field(fields["data_emissao"], "Data emissao", issue_date, settle_locator=fields["fornecedor"])
+        self._fill_text_field(fields["vencimento"], "Vencimento", issue_date, settle_locator=fields["data_emissao"])
+        self._fill_text_field(fields["valor"], "Valor", _format_totvs_money(group.valor_total), settle_locator=fields["vencimento"])
+        self._fill_text_field(fields["historico"], "Historico", historico, settle_locator=fields["valor"])
+        rateio_option = "0" if group.precisa_rateio else "1"
+        self._select_option(fields["rateio"], "Rateio", rateio_option)
+        if group.precisa_rateio:
+            self._confirm_expense_rateio_mode()
+        self._stabilize_on_previous_field(fields["historico"], "rateio")
+        if not group.precisa_rateio:
+            conta_contabil = next(iter(group.contas_por_tipo.values()), DEFAULT_EXPENSE_ACCOUNT)
+            self._fill_text_field(fields["conta_contabil"], "Conta contabil", conta_contabil, settle_locator=fields["historico"])
+        self._fill_text_field(fields["centro_custo"], "Centro de custo", group.loja, settle_locator=fields["historico"])
+        self._fill_text_field(fields["forma_pagamento"], "Forma de pagamento", "99", settle_locator=fields["centro_custo"])
+        self.log(
+            f"Rateio da loja {group.loja}: {'SIM' if group.precisa_rateio else 'NAO'} "
+            f"({len(group.tipos_despesa)} tipo(s) de despesa)."
+        )
+        if group.precisa_rateio:
+            contas = ", ".join(f"{tipo}: {conta}" for tipo, conta in group.contas_por_tipo.items())
+            self.log(f"Contas contabeis previstas para rateio: {contas}.")
+
+    def _confirm_expense_rateio_mode(self) -> None:
+        page = self._require_page()
+        self.log("Confirmando configuracao de rateio digitado...")
+
+        pre_configurado = self._wait_for_first_visible_locator(
+            [
+                page.get_by_role("radio", name="Pre-Configurado"),
+                page.get_by_text("Pre-Configurado", exact=False),
+            ],
+            timeout=45000,
+        )
+        if pre_configurado is None:
+            raise RuntimeError("Opcao Pre-Configurado do rateio nao apareceu.")
+        try:
+            pre_configurado.check(timeout=5000)
+        except Exception:
+            pre_configurado.click(force=True, timeout=5000)
+        page.wait_for_timeout(500)
+
+        digitado = self._wait_for_first_visible_locator(
+            [
+                page.get_by_role("radio", name="Digitado"),
+                page.get_by_text("Digitado", exact=False),
+            ],
+            timeout=45000,
+        )
+        if digitado is None:
+            raise RuntimeError("Opcao Digitado do rateio nao apareceu.")
+        try:
+            digitado.check(timeout=5000)
+        except Exception:
+            digitado.click(force=True, timeout=5000)
+        page.wait_for_timeout(500)
+
+        self._click_first_visible_locator(
+            [
+                page.get_by_role("button", name="Ok"),
+                page.get_by_role("button", name="OK"),
+                page.get_by_text("Ok", exact=True),
+                page.get_by_text("OK", exact=True),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Ok do rateio",
+        )
+
+        self.log("Aguardando botao Salvar do rateio...")
+        self._click_first_visible_locator(
+            [
+                page.locator("#COMP7518").get_by_role("button", name="Salvar"),
+                page.locator("#COMP7518"),
+                page.get_by_role("button", name="Salvar"),
+            ],
+            timeout=90000,
+            pause_ms=1500,
+            label="Salvar configuracao do rateio",
+        )
+
+    def save_and_lower_expense_title(self, group: ExpenseGroup) -> None:
+        if self.page is None:
+            raise RuntimeError("Pagina do TOTVS nao foi inicializada.")
+
+        self.log(f"Salvando titulo de Despesa da loja {group.loja}...")
+        dialog = self._payable_dialog()
+        self._click_first_visible_locator(
+            [dialog.get_by_role("button", name="Salvar"), dialog.get_by_text("Salvar", exact=True)],
+            timeout=45000,
+            pause_ms=1200,
+            label="Salvar despesa",
+        )
+        self._raise_if_totvs_error_present()
+        self._click_first_visible_locator(
+            [self.page.get_by_role("button", name="Salvar"), self.page.get_by_text("Salvar", exact=True)],
+            timeout=90000,
+            pause_ms=1500,
+            label="Salvar confirmacao despesa",
+        )
+        self._raise_if_totvs_error_present()
+        self._click_first_visible_locator(
+            [self.page.get_by_role("button", name="Cancelar"), self.page.get_by_text("Cancelar", exact=True)],
+            timeout=90000,
+            pause_ms=1200,
+            label="Cancelar despesa",
+        )
+
+        self.log("Abrindo baixa manual da despesa...")
+        self._click_when_clickable(self.page.get_by_role("button", name="Outras Ações"), "Outras Acoes")
+        self._click_first_visible_locator(
+            [
+                self.page.get_by_text("Baixa Manual", exact=True),
+                self.page.locator('wa-menu-popup-item[caption="Baixa Manual"]'),
+                self.page.locator('wa-menu-popup-item:has-text("Baixa Manual")'),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Baixa Manual",
+        )
+        self._click_first_visible_locator(
+            [
+                self.page.get_by_text("Baixar", exact=True),
+                self.page.locator('wa-menu-popup-item[caption="Baixar"]'),
+                self.page.locator('wa-menu-popup-item:has-text("Baixar")'),
+            ],
+            timeout=45000,
+            pause_ms=1200,
+            label="Baixar",
+        )
+        forma_baixa_combo = self._wait_for_first_visible_locator(
+            [self.page.get_by_role("combobox")],
+            timeout=60000,
+        )
+        if forma_baixa_combo is None:
+            raise RuntimeError("Combobox da baixa manual nao foi localizado.")
+        self._select_option(forma_baixa_combo, "Forma da baixa manual", "3")
+
+        baixa_codigo = _normalize_store_code(group.loja)
+        banco_baixa_input = self._wait_first_visible_locator(
+            [
+                self.page.locator("#COMP6028 > input"),
+                self.page.locator("#COMP6028"),
+            ],
+            timeout_ms=60000,
+            interval_ms=700,
+        )
+        if banco_baixa_input is None:
+            raise RuntimeError("Campo Banco da baixa manual nao foi localizado.")
+        self._fill_text_field(banco_baixa_input, "Banco da baixa manual", baixa_codigo)
+
+        self._click_first_visible_locator(
+            [self.page.get_by_role("button", name="Salvar"), self.page.get_by_text("Salvar", exact=True)],
+            timeout=45000,
+            pause_ms=1200,
+            label="Salvar baixa manual",
+        )
+        self._raise_if_totvs_error_present()
+        self._click_first_visible_locator(
+            [self.page.get_by_role("button", name="Salvar"), self.page.get_by_text("Salvar", exact=True)],
+            timeout=90000,
+            pause_ms=1500,
+            label="Salvar confirmacao baixa manual",
+        )
+        self._raise_if_totvs_error_present()
+        self.log(f"Despesa da loja {group.loja} salva e baixada.")
 
     def save_and_lower_cash_title(self, group: CashGroup) -> None:
         if self.page is None:
@@ -966,7 +1663,25 @@ class TotvsCaixaLoginBot:
         self._click_when_clickable(self.page.locator("#COMP4631 > .img"), "icone de baixa", timeout=90000)
 
         baixa_codigo = _normalize_store_code(group.loja)
-        self._fill_text_field(self.page.locator("#COMP6031 > input"), "Conta da baixa", baixa_codigo, field_key="conta_baixa")
+        self.log("Aguardando campo Banco da baixa carregar...")
+        banco_baixa_input = self._wait_first_visible_locator(
+            [
+                self.page.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-panel[1]/wa-panel[2]/wa-text-input[3]//input"
+                ),
+                self.page.locator(
+                    "xpath=/html/body/wa-dialog/wa-panel/wa-panel[2]/wa-tab-view/wa-tab-page/wa-dialog[2]/wa-panel[1]/wa-panel[2]/wa-text-input[3]"
+                ),
+                self.page.locator("#COMP6031 > input"),
+                self.page.locator("#COMP6031"),
+            ],
+            timeout_ms=60000,
+            interval_ms=700,
+        )
+        if banco_baixa_input is None:
+            raise RuntimeError("Campo Banco/Conta da baixa nao foi localizado.")
+        self.log(f"Preenchendo banco da baixa com {baixa_codigo} para a loja {group.loja}.")
+        self._fill_text_field(banco_baixa_input, "Conta da baixa", baixa_codigo, field_key="conta_baixa")
         self._click_first_visible_locator(
             [self.page.get_by_role("button", name="Salvar"), self.page.get_by_text("Salvar", exact=True)],
             timeout=45000,
@@ -1678,6 +2393,41 @@ class RoboLancamentosCaixaApp(ctk.CTk):
                 guide[loja] = codigo
         return guide
 
+    def _load_expense_client_guide(self) -> dict[str, str]:
+        guide_path = _resolve_expense_client_guide_path()
+        if not guide_path.exists():
+            self.log(f"Planilha guia de clientes de despesas ainda nao encontrada: {guide_path}")
+            return {}
+
+        self.log(f"Usando guia de clientes de despesas: {guide_path}")
+        guide_df = pd.read_excel(guide_path)
+        normalized_columns = {_normalize_text(column): column for column in guide_df.columns}
+        nome_col = normalized_columns.get("NOME")
+        codigo_col = normalized_columns.get("CODIGO")
+        if not nome_col or not codigo_col:
+            raise RuntimeError("A planilha guia de despesas precisa ter as colunas Nome e Codigo.")
+
+        guide: dict[str, str] = {}
+        for _, row in guide_df.iterrows():
+            nome = _normalize_text(row.get(nome_col, ""))
+            codigo = str(row.get(codigo_col, "")).strip()
+            if nome and codigo and codigo.lower() != "nan":
+                guide[nome] = codigo
+        return guide
+
+    def _load_expense_rateio_guide(self) -> pd.DataFrame:
+        guide_path = _resolve_expense_rateio_path()
+        if not guide_path.exists():
+            self.log(f"Planilha de rateio de despesas ainda nao encontrada: {guide_path}")
+            return pd.DataFrame()
+
+        self.log(f"Usando planilha de rateio de despesas: {guide_path}")
+        dataframe = pd.read_excel(guide_path, dtype=str).fillna("")
+        dataframe.columns = [str(column).strip() for column in dataframe.columns]
+        if "Conta Contábil Debito" in dataframe.columns:
+            dataframe["Conta Contábil Debito"] = dataframe["Conta Contábil Debito"].astype(str).str.strip()
+        return dataframe
+
     def _read_flow_dataframe(self) -> tuple[pd.DataFrame, Dict]:
         if self.validation_result is None:
             raise RuntimeError("Planilha ainda nao validada.")
@@ -1727,6 +2477,73 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             )
         return groups
 
+    def _build_expense_groups(self) -> list[ExpenseGroup]:
+        guide = self._load_expense_client_guide()
+        rateio_guide = self._load_expense_rateio_guide()
+        if not rateio_guide.empty:
+            self.log(f"Base de rateio carregada com {len(rateio_guide)} linha(s).")
+        dataframe, flow = self._read_flow_dataframe()
+        pending_column = flow["pending_column"]
+        pending_mask = dataframe[pending_column].fillna("").astype(str).str.strip().eq("")
+        pending = dataframe[pending_mask].copy()
+        if pending.empty:
+            raise RuntimeError("Nao ha linhas pendentes de Despesas para lancar.")
+
+        pending["LOJA_NORMALIZADA"] = pending["LOJA"].map(_normalize_text)
+        pending["TIPO_DESPESA_NORMALIZADO"] = pending["TIPO DA DESPESA"].map(_normalize_text)
+
+        groups: list[ExpenseGroup] = []
+        header_row = int(flow.get("header_row", 0))
+        for loja_raw, group_df in pending.groupby("LOJA_NORMALIZADA", dropna=True):
+            loja = _normalize_text(loja_raw)
+            if not loja:
+                continue
+
+            valor_total = float(pd.to_numeric(group_df["VALOR"], errors="coerce").fillna(0).sum())
+            tipos_despesa = [
+                tipo
+                for tipo in dict.fromkeys(group_df["TIPO_DESPESA_NORMALIZADO"].fillna("").map(_normalize_text).tolist())
+                if tipo
+            ]
+            tipo_despesa = tipos_despesa[0] if len(tipos_despesa) == 1 else "MULTIPLAS DESPESAS"
+            contas_por_tipo = {}
+            for tipo in tipos_despesa:
+                conta = _expense_account_for_type(tipo)
+                if not conta:
+                    self.log(
+                        f"Tipo de despesa sem conta mapeada: {tipo}. "
+                        f"Usando conta padrao {DEFAULT_EXPENSE_ACCOUNT} - {DEFAULT_EXPENSE_ACCOUNT_DESCRIPTION}."
+                    )
+                    conta = DEFAULT_EXPENSE_ACCOUNT
+                contas_por_tipo[tipo] = conta
+            descricoes = [
+                str(value).strip()
+                for value in group_df["DESCRICAO"].fillna("").tolist()
+                if str(value).strip() and str(value).strip().lower() != "nan"
+            ]
+            descricao = " | ".join(dict.fromkeys(descricoes[:3]))
+            periodo = _normalize_text(self.period_var.get())
+            row_numbers = [int(index) + header_row + 2 for index in group_df.index]
+            cliente_nome = f"FUNDO FIXO - {loja}"
+            cliente_codigo = guide.get(_normalize_text(cliente_nome), "")
+            if guide and not cliente_codigo:
+                raise RuntimeError(f"Cliente de despesa nao encontrado na guia: {cliente_nome}")
+
+            groups.append(
+                ExpenseGroup(
+                    loja=loja,
+                    tipo_despesa=tipo_despesa,
+                    tipos_despesa=tipos_despesa,
+                    contas_por_tipo=contas_por_tipo,
+                    descricao=descricao,
+                    cliente_codigo=cliente_codigo,
+                    valor_total=valor_total,
+                    periodo=periodo,
+                    row_numbers=row_numbers,
+                )
+            )
+        return groups
+
     def _mark_cash_group_as_lowered(self, group: CashGroup) -> None:
         if self.validation_result is None:
             raise RuntimeError("Planilha ainda nao validada.")
@@ -1748,6 +2565,28 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             sheet.cell(row=row_number, column=status_col).value = "BAIXADO"
         workbook.save(workbook_path)
         self.log(f"Planilha atualizada: {len(group.row_numbers)} linha(s) da loja {group.loja} marcadas como BAIXADO.")
+
+    def _mark_expense_group_as_lowered(self, group: ExpenseGroup) -> None:
+        if self.validation_result is None:
+            raise RuntimeError("Planilha ainda nao validada.")
+        workbook_path = Path(self.file_path_var.get().strip())
+        flow = FLOW_SPECS[self.validation_result.flow_key]
+        header_excel_row = int(flow.get("header_row", 0)) + 1
+
+        workbook = load_workbook(workbook_path)
+        sheet = workbook[self.validation_result.sheet_name]
+        status_col = None
+        for cell in sheet[header_excel_row]:
+            if _normalize_text(cell.value) == _normalize_text(flow["pending_column"]):
+                status_col = cell.column
+                break
+        if status_col is None:
+            raise RuntimeError(f"Coluna {flow['pending_column']} nao encontrada para atualizar a planilha.")
+
+        for row_number in group.row_numbers:
+            sheet.cell(row=row_number, column=status_col).value = "BAIXADO"
+        workbook.save(workbook_path)
+        self.log(f"Planilha atualizada: {len(group.row_numbers)} despesa(s) da loja {group.loja} marcadas como BAIXADO.")
 
     def start_processing(self) -> None:
         if self.validation_result is None:
@@ -1785,7 +2624,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         if not self.username_var.get().strip() or not self.password_var.get().strip():
             messagebox.showwarning("Credenciais", "Informe usuario e senha do TOTVS antes de iniciar.")
             return
-        if self.validation_result.flow_key == "cash":
+        if self.validation_result.flow_key in {"cash", "despesas"}:
             try:
                 datetime.strptime(self.issue_date_var.get().strip(), "%d/%m/%Y")
             except ValueError:
@@ -1837,6 +2676,31 @@ class RoboLancamentosCaixaApp(ctk.CTk):
 
                 self.after(0, lambda: self.status_var.set("Fluxo Cash concluido."))
                 self.log("Fluxo Cash concluido.")
+            elif self.validation_result is not None and self.validation_result.flow_key == "despesas":
+                expense_groups = self._build_expense_groups()
+                total_groups = len(expense_groups)
+                self.log(f"Despesas agrupadas em {total_groups} loja(s).")
+                self.after(0, lambda: self.status_var.set("TOTVS logado. Iniciando lancamentos de Despesas..."))
+
+                if not expense_groups:
+                    raise RuntimeError("Nenhum grupo de despesas foi montado.")
+
+                for index, group in enumerate(expense_groups, start=1):
+                    if self.stop_requested:
+                        break
+                    self.log(
+                        f"Processando Despesa {index}/{total_groups}: loja {group.loja} | "
+                        f"valor R$ {_format_brl(group.valor_total)}."
+                    )
+                    self.totvs_bot.open_expense_entry_screen()
+                    self.totvs_bot.fill_expense_title_basic(group, self.issue_date_var.get().strip())
+                    self.totvs_bot.save_and_lower_expense_title(group)
+                    self._mark_expense_group_as_lowered(group)
+                    progress = 0.35 + (index / total_groups) * 0.65
+                    self.after(0, lambda value=progress: self.progress.set(value))
+
+                self.after(0, lambda: self.status_var.set("Fluxo Despesas concluido."))
+                self.log("Fluxo Despesas concluido.")
             else:
                 self.after(0, lambda: self.progress.set(0.35))
                 self.after(0, lambda: self.status_var.set("TOTVS logado. Pronto para entrar no fluxo operacional."))
@@ -1845,9 +2709,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             self.log(f"Erro ao iniciar/login TOTVS: {exc}")
             self.after(0, lambda: self.status_var.set("Falha no login do TOTVS"))
             self.after(0, lambda: messagebox.showerror("Falha no login TOTVS", str(exc)))
-            if self.totvs_bot is not None:
-                self.totvs_bot.close()
-                self.totvs_bot = None
+            self.log("Navegador mantido aberto para diagnostico. Use Parar para fechar manualmente.")
         finally:
             self.after(0, self._update_action_buttons)
 

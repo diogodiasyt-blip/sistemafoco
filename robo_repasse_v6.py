@@ -24,6 +24,10 @@ from selenium.common.exceptions import (
 
 # ====================== CONFIGURAÇÕES GLOBAIS ======================
 URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
+URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
+URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
+XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
+XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
 
 COLUNAS = {
     "status": 3,
@@ -397,11 +401,12 @@ class AppRepasse:
                         self.escrever_log(f"🔍 Processando: {contrato_atual} | R$ {valor_str}" + (f" (Tentativa {self.tentativas_do_contrato_atual + 1})" if self.tentativas_do_contrato_atual > 0 else ""))
 
                         if self.tentativas_do_contrato_atual > 0:
-                            self.escrever_log(f"🔄 Erro anterior. Fechando navegador e fazendo novo login...")
+                            self.escrever_log("🔄 Erro anterior. Retornando para a URL base de contratos...")
                             if self.driver:
-                                self.driver.quit()
-                                self.driver = None
-                            time.sleep(PAUSA_MEDIA)
+                                self.preparar_tela_contratos_para_proximo_loop()
+                            else:
+                                if not self.abrir_coral():
+                                    raise Exception("Falha ao abrir o Coral.")
 
                         if not self.driver or not self.driver.current_url or "coral" not in self.driver.current_url:
                             if not self.abrir_coral():
@@ -438,9 +443,6 @@ class AppRepasse:
                             self.atualizar_labels_resultados()
                             self.escrever_log(f"🛑 Segunda tentativa falhou. Contrato {contrato_atual} marcado como ERRO.")
                             self.salvar_relatorio_parcial()
-                            if self.driver:
-                                self.driver.quit()
-                                self.driver = None
                             self.indice_inicio += 1
                             deve_avancar_indice = False
                             break
@@ -593,18 +595,15 @@ class AppRepasse:
     def preparar_tela_contratos_para_proximo_loop(self):
         self.escrever_log("🔄 Preparando tela de contratos para o próximo item...")
         try:
-            self.clicar_seguro(By.XPATH, '/html/body/foco-app/div[1]/div/ul/li[5]/a/i', "Menu Contratos Principal")
+            self.driver.get(URL_CORAL_CONTRATOS)
             time.sleep(PAUSA_CURTA)
-            self.clicar_seguro(By.XPATH, '/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a', "Aba de Contratos")
+            self.clicar_seguro(By.XPATH, XPATH_ABA_CONTRATOS, "Aba de Contratos")
             time.sleep(PAUSA_MEDIA)
             self.atualizar_campo_busca()
             self.escrever_log("✅ Tela de contratos pronta para o próximo contrato.")
             return True
         except Exception as e:
             self.escrever_log(f"⚠️ Falha ao preparar tela: {e}")
-            if self.driver:
-                self.driver.quit()
-                self.driver = None
             return False
 
     # ====================== OUTROS MÉTODOS ======================
@@ -676,18 +675,14 @@ class AppRepasse:
                     options.add_argument("--start-maximized")
                 self.driver = webdriver.Chrome(options=options)
 
-            self.driver.get("https://coral.aluguefoco.com.br/login")
+            self.driver.get(URL_CORAL_LOGIN)
             time.sleep(PAUSA_MEDIA)
 
             self.digitar_seguro(By.XPATH, '/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[1]/input', self.usuario.get(), "Usuário login")
             self.digitar_seguro(By.XPATH, '/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[2]/input', self.senha.get(), "Senha login")
             self.clicar_seguro(By.XPATH, '/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/button', "Botão Entrar")
 
-            self.clicar_seguro(By.XPATH, '/html/body/foco-app/div[1]/div/ul/li[5]/a/i', "Menu Contratos")
-            time.sleep(PAUSA_CURTA)
-            self.clicar_seguro(By.XPATH, '/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a', "Aba de Contratos")
-            time.sleep(PAUSA_CURTA)
-            self.atualizar_campo_busca()
+            self.preparar_tela_contratos_para_proximo_loop()
             self.escrever_log("✅ Coral pronto para lançamentos.")
             return True
         except Exception as e:
@@ -696,7 +691,7 @@ class AppRepasse:
 
     def atualizar_campo_busca(self):
         self.campo_busca = WebDriverWait(self.driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, '/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input'))
+            EC.presence_of_element_located((By.XPATH, XPATH_CAMPO_BUSCA_CONTRATOS))
         )
         return self.campo_busca
 

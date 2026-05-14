@@ -404,6 +404,7 @@ MOTIVE_CODE_GROUPS = {
 
 class ProtheusBot:
     HELP_FIELD_PATTERNS = {
+        "numero_titulo": ("FA040NUM", "E1_NUM", "NUMERO DO TITULO", "NO. TITULO", "CODIGO QUE AINDA NAO TENHA SIDO UTILIZADO"),
         "tipo": ("E1_TIPO", "HELP: E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
         "natureza": ("E1_NATUREZ", "HELP: E1_NATUREZ", "NATUREZ", "NATUREZA PROBLEMA"),
         "centro_custo": ("NOCUSTO", "HELP: NOCUSTO", "E1_CCUSTO", "C. CUSTO", "CENTRO DE CUSTO"),
@@ -415,6 +416,7 @@ class ProtheusBot:
         "Help: E1_NATUREZ Problema:",
         "Help: NOCUSTO Problema: C.",
         "Help: REGNOIS Problema:",
+        "Help: FA040NUM",
     )
 
     def __init__(
@@ -742,10 +744,12 @@ class ProtheusBot:
     def _read_lookup_row_document(self, dialog, name_locator, expected_cpf: str) -> str:
         if name_locator is None:
             return ""
+        expected_digits = self._normalize_document(expected_cpf)
         try:
             value = name_locator.evaluate(
                 """
-                (node) => {
+                (node, expectedDigits) => {
+                    const onlyDigits = (text) => String(text || '').replace(/\\D/g, '');
                     const label = node;
                     const cell =
                         label.closest('td') ||
@@ -753,16 +757,52 @@ class ProtheusBot:
                     if (!cell) return '';
                     const row =
                         cell.closest('tr') ||
+                        cell.closest('[role="row"]') ||
                         cell.parentElement;
                     if (!row) return '';
+                    const suffix = expectedDigits ? expectedDigits.slice(-3) : '';
+                    const candidates = Array.from(row.querySelectorAll('td, [role="cell"], label, div, span'));
+                    for (const candidate of candidates) {
+                        const text = (candidate.textContent || '').trim();
+                        if (!text) continue;
+                        const digits = onlyDigits(text);
+                        if (expectedDigits && digits && (digits === expectedDigits || digits.endsWith(suffix))) return text;
+                        if (suffix && text.includes('/' + suffix)) return text;
+                    }
                     const docCell =
                         row.querySelector('td[id="1"] label') ||
                         row.querySelector('td[id="1"]') ||
                         row.querySelector('td:nth-child(1) label') ||
-                        row.querySelector('td:nth-child(1)');
+                        row.querySelector('td:nth-child(1)') ||
+                        row.querySelector('[role="cell"]:first-child');
                     return docCell ? (docCell.textContent || '').trim() : '';
                 }
+                """,
+                expected_digits,
+            )
+            text = str(value or "").strip()
+            if text and self._lookup_document_matches(expected_cpf, text):
+                return text
+        except Exception:
+            pass
+
+        try:
+            value = dialog.evaluate(
                 """
+                (root, expectedDigits) => {
+                    const suffix = expectedDigits ? expectedDigits.slice(-3) : '';
+                    const nodes = Array.from(root.querySelectorAll('td, [role="cell"], label, div, span'));
+                    for (const node of nodes) {
+                        const text = (node.textContent || '').trim();
+                        if (!text) continue;
+                        const digits = text.replace(/\\D/g, '');
+                        if (expectedDigits && digits && (digits === expectedDigits || digits.endsWith(suffix))) return text;
+                        if (suffix && text.includes('/' + suffix)) return text;
+                    }
+                    return '';
+                }
+                """,
+                expected_digits,
             )
             text = str(value or "").strip()
             if text:
@@ -770,7 +810,7 @@ class ProtheusBot:
         except Exception:
             pass
 
-        suffix = self._normalize_document(expected_cpf)[-3:]
+        suffix = expected_digits[-3:]
         if suffix:
             try:
                 locator = self._first_visible_locator(
@@ -811,31 +851,25 @@ class ProtheusBot:
         dialog = self._faturamento_dialog()
         payload = self._build_billing_payload(row)
 
-        prefixo_input = self._first_visible_locator(
-            [dialog.get_by_title("Prefixo do titulo        ").get_by_role("textbox")]
-        )
-        numero_titulo_input = self._first_visible_locator(
-            [dialog.get_by_title("Numero do Titulo         ").get_by_role("textbox")]
-        )
+        prefixo_input = self._field_locator(dialog, "prefixo")
+        numero_titulo_input = self._field_locator(dialog, "numero_titulo")
         tipo_pg_combo = self._first_visible_locator(
-            [dialog.get_by_title("Tipo de pagamento        ").get_by_role("combobox")]
+            [dialog.locator(self.build_field_selector("tipo_pg")).last]
         )
-        tipo_input = self._first_visible_locator(
-            [dialog.get_by_title("Tipo do titulo           ").get_by_role("textbox")]
-        )
-        natureza_input = self._first_visible_locator([dialog.locator("#COMP6023 > input")])
-        contrato_input = self._first_visible_locator([dialog.locator("#COMP6028 > input")])
-        vencimento_input = self._first_visible_locator([dialog.locator("#COMP6030 > input")])
-        valor_input = self._first_visible_locator([dialog.locator("#COMP6032 > input")])
-        loja_input = self._first_visible_locator([dialog.locator("#COMP6036 > input")])
+        tipo_input = self._field_locator(dialog, "tipo")
+        natureza_input = self._field_locator(dialog, "natureza")
+        contrato_input = self._field_locator(dialog, "contrato")
+        vencimento_input = self._field_locator(dialog, "vencimento")
+        valor_input = self._field_locator(dialog, "valor_titulo")
+        loja_input = self._field_locator(dialog, "centro_custo")
         negocio_combo = self._first_visible_locator(
-            [dialog.get_by_title("Negocio                  ").get_by_role("combobox")]
+            [dialog.locator(self.build_field_selector("negocio")).last]
         )
-        segregacao_input = self._first_visible_locator([dialog.locator("#COMP6038 > input")])
+        segregacao_input = self._field_locator(dialog, "segregacao")
         motivo_combo = self._first_visible_locator(
-            [dialog.get_by_title("Motivo                   ").get_by_role("combobox")]
+            [dialog.locator(self.build_field_selector("motivo")).last]
         )
-        historico_input = self._first_visible_locator([dialog.locator("#COMP6040 > input")])
+        historico_input = self._field_locator(dialog, "historico")
         field_locators = {
             "prefixo": prefixo_input,
             "tipo": tipo_input,
@@ -851,12 +885,15 @@ class ProtheusBot:
         self._click_and_fill_field(prefixo_input, payload["prefixo"], "prefixo", settle_locator=prefixo_input)
 
         invoice_number = self._read_from_locator(numero_titulo_input)
+        self._guard_numero_titulo(numero_titulo_input, payload)
 
         self._select_combo_option(tipo_pg_combo, payload["tipo_pg"])
         self._stabilize_on_previous_field(prefixo_input, "tipo_pg")
 
         self._click_and_fill_field(tipo_input, payload["tipo"], "tipo", settle_locator=prefixo_input)
+        self._guard_numero_titulo(numero_titulo_input, payload)
         self._click_and_fill_field(natureza_input, payload["natureza"], "natureza", settle_locator=tipo_input)
+        self._guard_numero_titulo(numero_titulo_input, payload)
         self._click_and_fill_field(contrato_input, payload["contrato"], "contrato", settle_locator=natureza_input)
         self._click_and_fill_field(vencimento_input, payload["vencimento"], "vencimento", settle_locator=contrato_input)
         self._click_and_fill_field(valor_input, payload["valor_titulo"], "valor_titulo", settle_locator=vencimento_input)
@@ -1168,8 +1205,9 @@ class ProtheusBot:
                         if not candidate.is_visible():
                             continue
                         candidate.scroll_into_view_if_needed(timeout=3000)
-                        candidate.click(force=True)
+                        self._safe_click_locator(candidate)
                         page.wait_for_timeout(pause_ms)
+                        self._dismiss_help_popup_if_present()
                         return
                 except Exception:
                     continue
@@ -1239,7 +1277,14 @@ class ProtheusBot:
     def _names_match(expected_name: str, found_name: str) -> bool:
         if not expected_name or not found_name:
             return False
-        return expected_name == found_name or expected_name in found_name or found_name in expected_name
+        if expected_name == found_name or expected_name in found_name or found_name in expected_name:
+            return True
+        expected_tokens = [token for token in expected_name.split() if len(token) > 1]
+        found_tokens = set(found_name.split())
+        if expected_tokens and all(token in found_tokens for token in expected_tokens):
+            return True
+        important_expected = [token for token in expected_tokens if len(token) >= 4]
+        return bool(important_expected and all(token in found_tokens for token in important_expected))
 
     @staticmethod
     def _normalize_document(text: str) -> str:
@@ -1372,6 +1417,57 @@ class ProtheusBot:
         self._require_page().keyboard.press("Enter")
         self._require_page().wait_for_timeout(300)
 
+    def _field_locator(self, dialog, field_key: str):
+        selector = self.build_field_selector(field_key)
+        locator = self._first_visible_locator([dialog.locator(selector).last])
+        if locator is None:
+            label = FIELD_MAP.get(field_key, {}).get("label", field_key)
+            raise RuntimeError(f"Campo {label} nao foi localizado pelo identificador interno do TOTVS ({selector}).")
+        self._assert_locator_matches_field(locator, field_key)
+        return locator
+
+    def _assert_locator_matches_field(self, locator, field_key: str) -> None:
+        if locator is None or field_key is None:
+            return
+        expected_name = f"M->{FIELD_MAP[field_key]['protheus_name']}"
+        try:
+            actual = locator.evaluate(
+                """
+                (node) => {
+                    const host = node.closest('wa-text-input, wa-combobox') || node;
+                    return {
+                        tag: (host.tagName || '').toLowerCase(),
+                        name: host.getAttribute('name') || '',
+                        title: host.getAttribute('title') || '',
+                        caption: host.getAttribute('caption') || ''
+                    };
+                }
+                """
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Nao foi possivel validar o campo {FIELD_MAP[field_key]['label']}: {exc}") from exc
+
+        actual_name = str(actual.get("name", "")).strip()
+        if actual_name != expected_name:
+            raise RuntimeError(
+                f"Campo alvo incorreto antes de preencher {FIELD_MAP[field_key]['label']}. "
+                f"Esperado {expected_name}, encontrado {actual_name or actual}."
+            )
+
+    def _guard_numero_titulo(self, numero_titulo_locator, payload: dict) -> None:
+        numero = self._read_from_locator(numero_titulo_locator).strip()
+        if not numero:
+            return
+        valores_proibidos = {
+            str(payload.get("prefixo", "")).strip().upper(),
+            str(payload.get("tipo", "")).strip().upper(),
+        }
+        if numero.upper() in valores_proibidos:
+            raise RuntimeError(
+                "O campo No. Titulo foi preenchido indevidamente pelo robo. "
+                "A linha foi interrompida antes de salvar para evitar titulo duplicado no TOTVS."
+            )
+
     def _click_and_fill_field(
         self,
         locator,
@@ -1387,15 +1483,20 @@ class ProtheusBot:
         expected = str(value)
         last_value = ""
         for attempt in range(1, attempts + 1):
+            if field_key:
+                if FIELD_MAP.get(field_key, {}).get("kind") == "read_only_capture":
+                    raise RuntimeError(f"O campo {FIELD_MAP[field_key]['label']} e somente leitura e nao pode ser preenchido.")
+                self._assert_locator_matches_field(locator, field_key)
             locator.wait_for(state="visible", timeout=45000)
             locator.scroll_into_view_if_needed(timeout=3000)
-            self._focus_host_input(locator)
+            if not self._focus_and_verify_host_input(locator, field_key):
+                raise RuntimeError(f"Nao foi possivel confirmar foco no campo {FIELD_MAP.get(field_key or '', {}).get('label', field_key or 'campo')}.")
             page.wait_for_timeout(250)
 
             try:
-                self._fill_host_input(locator, expected, dismiss_popup=False)
+                self._clipboard_fill_locator(locator, expected, field_key)
             except Exception:
-                self._keyboard_fill_locator(locator, expected)
+                self._keyboard_fill_locator(locator, expected, field_key=field_key)
 
             if settle_locator is not None:
                 self._stabilize_on_previous_field(settle_locator, field_key)
@@ -1427,20 +1528,57 @@ class ProtheusBot:
         label = FIELD_MAP.get(field_key or "", {}).get("label", field_key or "campo")
         raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
 
-    def _keyboard_fill_locator(self, locator, value: str) -> None:
+    def _clipboard_fill_locator(self, locator, value: str, field_key: str | None = None) -> None:
         if locator is None:
             raise RuntimeError("Campo de entrada nao foi localizado.")
         page = self._require_page()
         locator.wait_for(state="visible", timeout=45000)
         locator.scroll_into_view_if_needed(timeout=3000)
-        if not self._focus_host_input(locator):
-            locator.click(force=True)
-            page.wait_for_timeout(250)
+        if not self._focus_and_verify_host_input(locator, field_key):
+            raise RuntimeError("Nao foi possivel focar o campo correto antes de colar.")
+
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(120)
+        self._set_clipboard_text(str(value))
+        page.keyboard.press("Control+V")
+        page.wait_for_timeout(650)
+
+    def _set_clipboard_text(self, value: str) -> None:
+        page = self._require_page()
+        try:
+            page.evaluate("async (text) => await navigator.clipboard.writeText(text)", value)
+            return
+        except Exception:
+            pass
+
+        try:
+            import tkinter as _tk
+
+            root = _tk.Tk()
+            root.withdraw()
+            root.clipboard_clear()
+            root.clipboard_append(value)
+            root.update()
+            root.destroy()
+            return
+        except Exception:
+            pass
+
+        raise RuntimeError("Nao foi possivel gravar o valor na area de transferencia.")
+
+    def _keyboard_fill_locator(self, locator, value: str, field_key: str | None = None) -> None:
+        if locator is None:
+            raise RuntimeError("Campo de entrada nao foi localizado.")
+        page = self._require_page()
+        locator.wait_for(state="visible", timeout=45000)
+        locator.scroll_into_view_if_needed(timeout=3000)
+        if not self._focus_and_verify_host_input(locator, field_key):
+            raise RuntimeError("Nao foi possivel focar o campo correto antes de preencher.")
         page.keyboard.press("Control+A")
         page.wait_for_timeout(120)
         page.keyboard.press("Backspace")
         page.wait_for_timeout(120)
-        page.keyboard.type(str(value), delay=120)
+        page.keyboard.insert_text(str(value))
         page.wait_for_timeout(500)
 
     def _stabilize_on_previous_field(self, locator, current_field_key: str | None = None) -> None:
@@ -1569,10 +1707,32 @@ class ProtheusBot:
     def _select_combo_option(self, locator, value: str) -> None:
         if locator is None:
             raise RuntimeError("Combobox nao localizado.")
+        page = self._require_page()
         locator.wait_for(state="visible", timeout=45000)
         locator.scroll_into_view_if_needed(timeout=3000)
-        locator.select_option(str(value))
-        self._require_page().wait_for_timeout(800)
+
+        try:
+            locator.select_option(str(value))
+            page.wait_for_timeout(800)
+            self._dismiss_help_popup_if_present()
+            return
+        except Exception:
+            pass
+
+        self._safe_click_locator(locator)
+        page.wait_for_timeout(250)
+        page.keyboard.press("Control+A")
+        page.wait_for_timeout(120)
+        try:
+            self._set_clipboard_text(str(value))
+            page.keyboard.press("Control+V")
+        except Exception:
+            page.keyboard.insert_text(str(value))
+        page.wait_for_timeout(200)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(800)
         self._dismiss_help_popup_if_present()
 
     def _settle_after_field(self) -> None:
@@ -1635,6 +1795,11 @@ class ProtheusBot:
         except Exception:
             pass
         try:
+            locator.click(timeout=5000)
+            return
+        except Exception:
+            pass
+        try:
             locator.click(force=True, timeout=5000)
             return
         except Exception:
@@ -1678,6 +1843,49 @@ class ProtheusBot:
         except Exception:
             return False
 
+    def _focus_and_verify_host_input(self, locator, field_key: str | None = None) -> bool:
+        if locator is None:
+            return False
+        if field_key:
+            self._assert_locator_matches_field(locator, field_key)
+        for _ in range(3):
+            try:
+                locator.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+            try:
+                locator.click(timeout=3000)
+            except Exception:
+                try:
+                    locator.click(force=True, timeout=3000)
+                except Exception:
+                    pass
+            try:
+                focused = bool(
+                    locator.evaluate(
+                        """
+                        (host) => {
+                            const root = host.shadowRoot || host;
+                            const input =
+                                root.querySelector('input') ||
+                                root.querySelector('textarea') ||
+                                host.querySelector('input') ||
+                                host.querySelector('textarea');
+                            if (!input) return false;
+                            input.focus();
+                            const active = root.activeElement || document.activeElement;
+                            return active === input || document.activeElement === host || document.activeElement === input;
+                        }
+                        """
+                    )
+                )
+                if focused:
+                    return True
+            except Exception:
+                pass
+            self._require_page().wait_for_timeout(200)
+        return False
+
     def _find_visible_totvs_help_dialog(self):
         page = self._require_page()
         for hint in self.HELP_TEXT_HINTS:
@@ -1699,7 +1907,7 @@ class ProtheusBot:
             "wa-dialog",
             "div[role='dialog']",
         ]
-        help_markers = ("PROBLEMA", "HELP:", "CAMPO", "E1_", "NOCUSTO", "REGNOIS", "E1_TIPO", "E1_NATUREZ")
+        help_markers = ("PROBLEMA", "HELP:", "CAMPO", "E1_", "NOCUSTO", "REGNOIS", "FA040NUM", "E1_TIPO", "E1_NATUREZ")
 
         for selector in dialog_selectors:
             try:
@@ -1720,7 +1928,7 @@ class ProtheusBot:
                     continue
         try:
             visible_help = page.locator(
-                "xpath=//*[contains(normalize-space(.),'Help: E1_') or contains(normalize-space(.),'Help: NOCUSTO') or contains(normalize-space(.),'Help: REGNOIS')]"
+                "xpath=//*[contains(normalize-space(.),'Help: E1_') or contains(normalize-space(.),'Help: NOCUSTO') or contains(normalize-space(.),'Help: REGNOIS') or contains(normalize-space(.),'Help: FA040NUM')]"
             )
             count = visible_help.count()
             for index in range(count - 1, -1, -1):
