@@ -16,6 +16,7 @@ import tkinter as tk
 import unicodedata
 from PIL import Image
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -45,6 +46,10 @@ XPATH_CARTOES_RADIO = "//ngb-modal-window//section[contains(@class,'container-ca
 XPATH_VALOR_MODAL = "/html/body/ngb-modal-window/div/div/foco-adyen-profit-payments-modal/div[2]/div[1]/form/div[1]/section[1]/input[2]"
 XPATH_PARCELAMENTO = "//ngb-modal-window//select[@formcontrolname='profitInstallments']"
 XPATH_SALVAR_MODAL = "/html/body/ngb-modal-window/div/div/foco-adyen-profit-payments-modal/div[2]/div[2]/button[2]"
+XPATH_TOAST_PAGAMENTO_SUCESSO = (
+    "//*[contains(translate(normalize-space(.), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), "
+    "'PAGAMENTO REALIZADO COM SUCESSO')]"
+)
 
 MAIN_BG = "#f6f4f1"
 CARD_BG = "#ffffff"
@@ -69,6 +74,10 @@ class ValidationResult:
     contract_column: str | None = None
     value_column: str | None = None
     ready_records: list[dict[str, object]] | None = None
+
+
+class PendingBalanceMismatchError(RuntimeError):
+    pass
 
 
 def normalize_text(value: object) -> str:
@@ -664,7 +673,92 @@ class RoboCobrancaCartoesApp(ctk.CTk):
             f"[td[normalize-space()='{contract_number}']]"
         )
         self.log(f"Aguardando resultado da busca para contrato {contract_number}...")
-        return WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((By.XPATH, contract_xpath)))
+        row = WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((By.XPATH, contract_xpath)))
+        row_contract = (row.find_element(By.XPATH, "./td[1]").text or "").strip()
+        if row_contract != contract_number:
+            raise RuntimeError(f"Resultado incorreto na busca. Esperado {contract_number}, encontrado {row_contract}.")
+        self.log(f"Resultado validado: contrato {contract_number} encontrado na tabela.")
+        return row
+
+    def _click_payment_button_from_row(self, row, contract_number: str) -> None:
+        self.log(f"Clicando em Efetuar pagamento na linha validada do contrato {contract_number}...")
+        button = row.find_element(
+            By.XPATH,
+            ".//button[contains(@title, 'Efetuar pagamentos pendentes') or contains(normalize-space(.), 'Efetuar pagamento')]",
+        )
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+        time.sleep(0.2)
+        try:
+            button.click()
+        except Exception:
+            self.driver.execute_script("arguments[0].click();", button)
+        self.log(f"Clique OK em Efetuar pagamento do contrato {contract_number}.")
+
+    def _read_pending_balance_from_row(self, row) -> str:
+        cells = row.find_elements(By.XPATH, "./td")
+        if len(cells) < 3:
+            raise RuntimeError("Linha do contrato nao possui coluna Valor.")
+        return (cells[2].text or "").replace("\xa0", " ").strip()
+
+    def _validate_pending_balance(self, row, contract_number: str, expected_balance: object) -> None:
+        coral_balance = self._read_pending_balance_from_row(row)
+        expected_text = self._format_money_for_coral(expected_balance)
+        if not self._money_values_match(expected_text, coral_balance):
+            raise PendingBalanceMismatchError(
+                f"Saldo divergente no Coral. Planilha={expected_text} | Coral={coral_balance or '<vazio>'}."
+            )
+        self.log(f"Saldo pendente validado para {contract_number}: planilha={expected_text} | Coral={coral_balance}")
+
+    def _contract_result_visible(self, contract_number: str, timeout: int = 10) -> bool:
+        contract_xpath = (
+            "//foco-adyen-profit-payments//table//tbody//tr"
+            f"[td[normalize-space()='{contract_number}']]"
+        )
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            try:
+                rows = self.driver.find_elements(By.XPATH, contract_xpath)
+                if any(row.is_displayed() for row in rows):
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.5)
+        return False
+
+    def _wait_payment_success_toast(self, timeout: int = 8) -> bool:
+        self.log("Verificando notificacao de pagamento realizado...")
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.visibility_of_element_located((By.XPATH, XPATH_TOAST_PAGAMENTO_SUCESSO))
+            )
+            self.log("Toast de sucesso detectado: Pagamento realizado com sucesso.")
+            return True
+        except TimeoutException:
+            self.log("Toast de sucesso nao apareceu dentro do tempo esperado.")
+            return False
+
+    def _confirm_charge_after_save(self, contract_number: str) -> tuple[bool, str]:
+        if self._wait_payment_success_toast(timeout=8):
+            return True, "Pagamento realizado com sucesso."
+
+        self.log("Validando cobranca pelo desaparecimento do contrato no resultado da pesquisa...")
+        try:
+            self._wait_visible(XPATH_CAMPO_BUSCA, "campo de busca apos tentativa de cobranca", timeout=20)
+            self._safe_type(
+                XPATH_CAMPO_BUSCA,
+                contract_number,
+                "campo de busca para confirmar cobranca",
+                timeout=20,
+                press_enter=True,
+            )
+            time.sleep(1)
+        except Exception as exc:
+            self.log(f"Nao foi possivel refazer a busca apos salvar: {exc}")
+
+        if not self._contract_result_visible(contract_number, timeout=10):
+            return True, "Contrato nao apareceu mais no resultado apos a tentativa; cobrança considerada realizada."
+
+        return False, "Contrato ainda aparece no resultado apos a tentativa; tentando proximo cartao."
 
     def _count_cards(self, timeout: int = 30) -> int:
         self.log("Aguardando cartoes disponiveis no modal...")
@@ -737,8 +831,14 @@ class RoboCobrancaCartoesApp(ctk.CTk):
 
     def _open_contract_payment_modal(self, contract_number: str) -> None:
         self._safe_type(XPATH_CAMPO_BUSCA, contract_number, "campo de busca de contratos", timeout=30, press_enter=True)
-        self._find_pending_contract_row(contract_number, timeout=45)
-        self._safe_click(XPATH_BOTAO_EFETUAR_PAGAMENTO, "botao Efetuar pagamento", timeout=30)
+        row = self._find_pending_contract_row(contract_number, timeout=45)
+        self._click_payment_button_from_row(row, contract_number)
+
+    def _open_contract_payment_modal_after_balance_check(self, contract_number: str, balance: object) -> None:
+        self._safe_type(XPATH_CAMPO_BUSCA, contract_number, "campo de busca de contratos", timeout=30, press_enter=True)
+        row = self._find_pending_contract_row(contract_number, timeout=45)
+        self._validate_pending_balance(row, contract_number, balance)
+        self._click_payment_button_from_row(row, contract_number)
 
     def _attempt_charge_current_modal(self, contract_number: str, balance: object) -> tuple[str, int, int, str]:
         try:
@@ -752,6 +852,10 @@ class RoboCobrancaCartoesApp(ctk.CTk):
             if self.stop_requested:
                 return "INTERROMPIDO", total_cards, card_index, "Execucao interrompida pelo usuario."
             try:
+                if card_index > 0:
+                    self.log("Reabrindo modal de pagamento para tentar o proximo cartao...")
+                    self._open_contract_payment_modal(contract_number)
+
                 self._select_card_by_index(card_index, timeout=30)
                 self._fill_and_validate_money(XPATH_VALOR_MODAL, balance_text, "campo Valor", timeout=30)
                 self._safe_select_value(XPATH_PARCELAMENTO, "1", "parcelamento 1x", timeout=30)
@@ -761,11 +865,15 @@ class RoboCobrancaCartoesApp(ctk.CTk):
                         f"Valor mudou antes de salvar. Esperado {balance_text}, lido {current_value or '<vazio>'}."
                     )
                 self._safe_click(XPATH_SALVAR_MODAL, "botao Salvar pagamento", timeout=30)
-                return "AGUARDANDO_CONFIRMACAO", total_cards, card_index + 1, detail
+                charged, detail = self._confirm_charge_after_save(contract_number)
+                if charged:
+                    return "COBRADO", total_cards, card_index + 1, detail
+
+                self.log(detail)
             except Exception as exc:
                 self.log(f"Falha ao tentar cartao {card_index + 1}: {exc}")
 
-        return "NAO_COBRADO", total_cards, total_cards, "Todas as tentativas de cartao falharam antes da confirmacao."
+        return "NAO_COBRADO", total_cards, total_cards, "Todos os cartoes foram tentados e o contrato continuou pendente."
 
     def _process_contract_payment(self, contract_number: str, balance: object) -> None:
         self.status_var.set(f"Processando contrato {contract_number}...")
@@ -786,13 +894,17 @@ class RoboCobrancaCartoesApp(ctk.CTk):
             self.log(f"Tentativa {attempt}/3 para contrato {contract_number}.")
             try:
                 self._go_to_pending_payments_safe()
-                self._open_contract_payment_modal(contract_number)
+                self._open_contract_payment_modal_after_balance_check(contract_number, balance)
                 status, total_cards, attempted_cards, detail = self._attempt_charge_current_modal(contract_number, balance)
                 self._append_report_row(contract_number, total_cards, attempted_cards, balance, status, detail)
                 self.log(
                     f"Relatorio atualizado: contrato={contract_number} | cartoes={total_cards} | "
                     f"tentativas={attempted_cards} | saldo={self._format_money_for_coral(balance)} | status={status}"
                 )
+                return
+            except PendingBalanceMismatchError as exc:
+                self._append_report_row(contract_number, 0, 0, balance, "SALDO_DIVERGENTE", str(exc))
+                self.log(f"Contrato {contract_number} ignorado por saldo divergente: {exc}")
                 return
             except Exception as exc:
                 last_error = str(exc)

@@ -42,7 +42,7 @@
   "cobranca_cartoes": {
     "arquivo": "robo_cobranca_cartoes_v1.py",
     "classe": "RoboCobrancaCartoesApp",
-    "versao": "1.0.1",
+    "versao": "1.0.2",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Cartoes",
     "geometry": "1120x760",
