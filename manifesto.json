@@ -54,10 +54,10 @@
   "relatorio_coral": {
     "arquivo": "robo_relatorio_coral_v1.py",
     "classe": "RoboRelatorioCoralApp",
-    "versao": "1.0.0",
+    "versao": "1.0.1",
     "constructor_mode": "external_process",
     "title": "Robo de Relatorio Coral",
-    "geometry": "1120x760",
+    "geometry": "660x470",
     "resizable": true,
     "card_title": "Relatorio Coral",
     "description": "Emissao de relatorio no Coral com download CSV e conversao automatica para Excel.",

@@ -26,13 +26,15 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_TITLE = "Robo de Relatorio Coral"
-APP_GEOMETRY = "1120x760"
+APP_GEOMETRY = "660x470"
 
 URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
 URL_PING_ABERTURA = "https://docs.google.com/forms/d/e/1FAIpQLScmxNbTO-vXw0LEOKIyEhSpIl9aTbw8x5hnEI5VY2eVMRh5gQ/formResponse"
 URL_CORAL = "https://coral.aluguefoco.com.br/login"
 URL_DASHBOARD_POS_LOGIN = "https://coral.aluguefoco.com.br/precificacao/dashboard"
 URL_RELATORIOS = "https://coral.aluguefoco.com.br/relatorios"
+CORAL_USERNAME = "ddm"
+CORAL_PASSWORD = "87028542Di@"
 
 XPATH_LOGIN = "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[1]/input"
 XPATH_SENHA = "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[2]/input"
@@ -191,11 +193,9 @@ class RoboRelatorioCoralApp(ctk.CTk):
 
         self.title(APP_TITLE)
         self.geometry(APP_GEOMETRY)
-        self.minsize(1040, 700)
+        self.minsize(600, 390)
         self.configure(fg_color=MAIN_BG)
 
-        self.username_var = ctk.StringVar()
-        self.password_var = ctk.StringVar()
         today = datetime.now().strftime("%d/%m/%Y")
         self.start_date_var = ctk.StringVar(value=today)
         self.end_date_var = ctk.StringVar(value=today)
@@ -219,22 +219,17 @@ class RoboRelatorioCoralApp(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        scroll = ctk.CTkScrollableFrame(self, fg_color=MAIN_BG, corner_radius=0)
-        scroll.grid(row=0, column=0, sticky="nsew")
-        scroll.grid_columnconfigure(0, weight=1)
-
-        container = ctk.CTkFrame(scroll, fg_color="transparent")
-        container.grid(row=0, column=0, sticky="nsew", padx=24, pady=20)
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.grid(row=0, column=0, sticky="nsew", padx=16, pady=14)
         container.grid_columnconfigure(0, weight=1)
 
         self._build_header(container)
-        self._build_access_section(container)
         self._build_period_section(container)
         self._build_execution_section(container)
 
     def _build_header(self, parent) -> None:
         card = self._card(parent)
-        card.grid(row=0, column=0, sticky="ew", pady=(0, 16))
+        card.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         card.grid_columnconfigure(1, weight=1)
 
         logo_loaded = False
@@ -242,78 +237,68 @@ class RoboRelatorioCoralApp(ctk.CTk):
             try:
                 if candidate.exists():
                     image = Image.open(candidate)
-                    self.logo_image = ctk.CTkImage(light_image=image, dark_image=image, size=(112, 54))
-                    ctk.CTkLabel(card, image=self.logo_image, text="").grid(row=0, column=0, rowspan=3, padx=(18, 22), pady=18)
+                    self.logo_image = ctk.CTkImage(light_image=image, dark_image=image, size=(82, 40))
+                    ctk.CTkLabel(card, image=self.logo_image, text="").grid(row=0, column=0, rowspan=3, padx=(14, 16), pady=12)
                     logo_loaded = True
                     break
             except Exception:
                 continue
 
         if not logo_loaded:
-            ctk.CTkLabel(card, text="foco", text_color=PRIMARY_TEXT, font=("Segoe UI", 32, "bold")).grid(
-                row=0, column=0, rowspan=3, padx=(18, 22), pady=18
+            ctk.CTkLabel(card, text="foco", text_color=PRIMARY_TEXT, font=("Segoe UI", 26, "bold")).grid(
+                row=0, column=0, rowspan=3, padx=(14, 16), pady=12
             )
 
         ctk.CTkLabel(
             card,
             text="Relatorio Coral",
             text_color=PRIMARY_TEXT,
-            font=("Segoe UI", 28, "bold"),
+            font=("Segoe UI", 22, "bold"),
             anchor="w",
-        ).grid(row=0, column=1, sticky="ew", padx=(0, 20), pady=(22, 4))
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 16), pady=(14, 2))
         ctk.CTkLabel(
             card,
-            text="Emite relatorio no Coral, baixa CSV e entrega Excel corrigido para PT-BR.",
+            text="Selecione o periodo e gere o Excel corrigido.",
             text_color=MUTED_TEXT,
-            font=("Segoe UI", 14),
+            font=("Segoe UI", 13),
             anchor="w",
         ).grid(row=1, column=1, sticky="ew", padx=(0, 20))
         ctk.CTkLabel(
             card,
             text="OPERACAO DE RELATORIOS",
             text_color="#b65748",
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
             anchor="w",
-        ).grid(row=2, column=1, sticky="ew", padx=(0, 20), pady=(10, 22))
-
-    def _build_access_section(self, parent) -> None:
-        card = self._section(parent, "Acesso ao Coral", 1)
-        card.grid_columnconfigure((0, 1), weight=1)
-
-        self._label(card, "Usuario").grid(row=1, column=0, sticky="w", padx=18, pady=(8, 4))
-        self._entry(card, self.username_var).grid(row=2, column=0, sticky="ew", padx=(18, 10), pady=(0, 14))
-
-        self._label(card, "Senha").grid(row=1, column=1, sticky="w", padx=18, pady=(8, 4))
-        self._entry(card, self.password_var, show="*").grid(row=2, column=1, sticky="ew", padx=(10, 18), pady=(0, 14))
+        ).grid(row=2, column=1, sticky="ew", padx=(0, 16), pady=(6, 14))
 
     def _build_period_section(self, parent) -> None:
-        card = self._section(parent, "Periodo do relatorio", 2)
+        card = self._section(parent, "Periodo do relatorio", 1)
         card.grid_columnconfigure((0, 1), weight=1)
 
         start_frame = ctk.CTkFrame(card, fg_color="transparent")
-        start_frame.grid(row=1, column=0, sticky="ew", padx=(18, 10), pady=(8, 14))
+        start_frame.grid(row=1, column=0, sticky="ew", padx=(14, 8), pady=(6, 12))
         start_frame.grid_columnconfigure(0, weight=1)
         self._label(start_frame, "Data inicial").grid(row=0, column=0, sticky="w", pady=(0, 4))
         self._entry(start_frame, self.start_date_var).grid(row=1, column=0, sticky="ew", padx=(0, 8))
-        self._secondary_button(start_frame, "Calendario", lambda: self._open_calendar(self.start_date_var), width=130).grid(
+        self._secondary_button(start_frame, "Calendario", lambda: self._open_calendar(self.start_date_var), width=112).grid(
             row=1, column=1, sticky="e"
         )
 
         end_frame = ctk.CTkFrame(card, fg_color="transparent")
-        end_frame.grid(row=1, column=1, sticky="ew", padx=(10, 18), pady=(8, 14))
+        end_frame.grid(row=1, column=1, sticky="ew", padx=(8, 14), pady=(6, 12))
         end_frame.grid_columnconfigure(0, weight=1)
         self._label(end_frame, "Data final").grid(row=0, column=0, sticky="w", pady=(0, 4))
         self._entry(end_frame, self.end_date_var).grid(row=1, column=0, sticky="ew", padx=(0, 8))
-        self._secondary_button(end_frame, "Calendario", lambda: self._open_calendar(self.end_date_var), width=130).grid(
+        self._secondary_button(end_frame, "Calendario", lambda: self._open_calendar(self.end_date_var), width=112).grid(
             row=1, column=1, sticky="e"
         )
 
     def _build_execution_section(self, parent) -> None:
-        card = self._section(parent, "Execucao", 3)
+        card = self._section(parent, "Execucao", 2)
         card.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(card, textvariable=self.status_var, text_color=MUTED_TEXT, font=("Segoe UI", 13)).grid(
-            row=1, column=0, sticky="w", padx=18, pady=(8, 8)
+            row=1, column=0, sticky="w", padx=14, pady=(6, 6)
         )
         self.progress_bar = ctk.CTkProgressBar(
             card,
@@ -322,11 +307,11 @@ class RoboRelatorioCoralApp(ctk.CTk):
             fg_color=SOFT_RED,
             corner_radius=12,
         )
-        self.progress_bar.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 14))
+        self.progress_bar.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
         self.progress_bar.set(0)
 
         actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.grid(row=3, column=0, sticky="ew", padx=18, pady=(4, 18))
+        actions.grid(row=3, column=0, sticky="ew", padx=14, pady=(2, 14))
         actions.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.start_button = self._primary_button(actions, "Iniciar robo", self.start_processing)
@@ -337,13 +322,13 @@ class RoboRelatorioCoralApp(ctk.CTk):
         self.stop_button.grid(row=0, column=2, sticky="ew", padx=(8, 0))
 
     def _card(self, parent):
-        return ctk.CTkFrame(parent, fg_color=CARD_BG, border_color=CARD_BORDER, border_width=1, corner_radius=24)
+        return ctk.CTkFrame(parent, fg_color=CARD_BG, border_color=CARD_BORDER, border_width=1, corner_radius=18)
 
     def _section(self, parent, title: str, row: int):
         card = self._card(parent)
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 10))
         ctk.CTkLabel(card, text=title, text_color=PRIMARY_TEXT, font=("Segoe UI", 16, "bold")).grid(
-            row=0, column=0, columnspan=4, sticky="w", padx=18, pady=(16, 0)
+            row=0, column=0, columnspan=4, sticky="w", padx=14, pady=(12, 0)
         )
         return card
 
@@ -355,7 +340,7 @@ class RoboRelatorioCoralApp(ctk.CTk):
             parent,
             textvariable=variable,
             show=show,
-            height=42,
+            height=38,
             fg_color="#ffffff",
             border_color=CARD_BORDER,
             border_width=1,
@@ -369,8 +354,8 @@ class RoboRelatorioCoralApp(ctk.CTk):
             parent,
             text=text,
             command=command,
-            width=width or 180,
-            height=42,
+            width=width or 150,
+            height=38,
             fg_color=BUTTON_BG,
             hover_color=BUTTON_ACTIVE_BG,
             text_color="#ffffff",
@@ -383,8 +368,8 @@ class RoboRelatorioCoralApp(ctk.CTk):
             parent,
             text=text,
             command=command,
-            width=width or 180,
-            height=42,
+            width=width or 150,
+            height=38,
             fg_color="#ffffff",
             hover_color=SOFT_RED,
             border_color=CARD_BORDER,
@@ -500,12 +485,6 @@ class RoboRelatorioCoralApp(ctk.CTk):
         render_calendar()
 
     def _validate_inputs(self) -> bool:
-        if not self.username_var.get().strip():
-            messagebox.showwarning("Validacao", "Informe o usuario do Coral.")
-            return False
-        if not self.password_var.get().strip():
-            messagebox.showwarning("Validacao", "Informe a senha do Coral.")
-            return False
         try:
             start = parse_ptbr_date(self.start_date_var.get())
             end = parse_ptbr_date(self.end_date_var.get())
@@ -523,9 +502,8 @@ class RoboRelatorioCoralApp(ctk.CTk):
 
     def registrar_abertura(self) -> None:
         try:
-            usuario_coral = self.username_var.get().strip()
             usuario_windows = os.environ.get("USERNAME", "").strip() or getpass.getuser().strip()
-            usuario_registro = usuario_coral or usuario_windows or "usuario_desconhecido"
+            usuario_registro = CORAL_USERNAME or usuario_windows or "usuario_desconhecido"
             data = {
                 "entry.1320712185": "Robo Relatorio Coral",
                 "entry.1823299431": usuario_registro,
@@ -735,8 +713,8 @@ class RoboRelatorioCoralApp(ctk.CTk):
     def _login_coral(self) -> None:
         self.log("Abrindo Coral...")
         self.driver.get(URL_CORAL)
-        self._safe_type(XPATH_LOGIN, self.username_var.get().strip(), "campo usuario")
-        self._safe_type(XPATH_SENHA, self.password_var.get().strip(), "campo senha", secret=True)
+        self._safe_type(XPATH_LOGIN, CORAL_USERNAME, "campo usuario")
+        self._safe_type(XPATH_SENHA, CORAL_PASSWORD, "campo senha", secret=True)
         self._safe_click(XPATH_ENTRAR, "botao Entrar")
         self.log("Login enviado.")
         self._wait_login_completed()
