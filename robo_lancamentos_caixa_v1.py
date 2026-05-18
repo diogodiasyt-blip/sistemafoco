@@ -18,11 +18,17 @@ from openpyxl import load_workbook
 from PIL import Image
 from playwright.sync_api import sync_playwright
 from tkinter import filedialog, messagebox
+try:
+    import keyring
+except Exception:
+    keyring = None
 
 
 APP_TITLE = "Robô de Lançamentos de Caixa"
 APP_GEOMETRY = "1180x760"
 TOTVS_URL = "https://focoaluguel162907.protheus.cloudtotvs.com.br:1453/webapp/"
+APP_CREDENTIAL_SERVICE = "SistemaFOCO"
+CREDENTIAL_MODULE_KEY = "lancamentos_caixa_totvs"
 
 MAIN_BG = "#f6f4f1"
 CARD_BG = "#ffffff"
@@ -1752,6 +1758,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         self.totvs_bot: TotvsCaixaLoginBot | None = None
         self.logo_image = self._load_logo()
 
+        self._load_saved_credentials()
         self._build_layout()
         self._update_flow_description()
         self._update_action_buttons()
@@ -1765,6 +1772,49 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             except Exception:
                 continue
         return None
+
+    def _credential_key(self, suffix: str) -> str:
+        return f"{CREDENTIAL_MODULE_KEY}:{suffix}"
+
+    def _load_saved_credentials(self) -> None:
+        if keyring is None:
+            return
+        try:
+            username = keyring.get_password(APP_CREDENTIAL_SERVICE, self._credential_key("usuario")) or ""
+            password = keyring.get_password(APP_CREDENTIAL_SERVICE, self._credential_key("senha")) or ""
+            if username:
+                self.username_var.set(username)
+            if password:
+                self.password_var.set(password)
+        except Exception:
+            pass
+
+    def save_credentials(self) -> None:
+        if keyring is None:
+            messagebox.showwarning("Salvar acesso", "Biblioteca keyring nao esta disponivel neste ambiente.")
+            return
+        username = self.username_var.get().strip()
+        password = self.password_var.get().strip()
+        if not username or not password:
+            messagebox.showwarning("Salvar acesso", "Preencha usuario e senha antes de salvar.")
+            return
+        try:
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self._credential_key("usuario"), username)
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self._credential_key("senha"), password)
+            messagebox.showinfo("Salvar acesso", "Usuario e senha salvos neste computador.")
+        except Exception as exc:
+            messagebox.showerror("Salvar acesso", f"Nao foi possivel salvar o acesso:\n{exc}")
+
+    def clear_credentials(self) -> None:
+        if keyring is not None:
+            for suffix in ("usuario", "senha"):
+                try:
+                    keyring.delete_password(APP_CREDENTIAL_SERVICE, self._credential_key(suffix))
+                except Exception:
+                    pass
+        self.username_var.set("")
+        self.password_var.set("")
+        messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
 
     def _build_layout(self) -> None:
         container = ctk.CTkScrollableFrame(self, fg_color="transparent", corner_radius=0)
@@ -1824,6 +1874,10 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         self._form_label(grid, "Senha").grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(0, 6))
         self._entry(grid, self.username_var).grid(row=1, column=0, sticky="ew", padx=(0, 10))
         self._entry(grid, self.password_var, show="*").grid(row=1, column=1, sticky="ew", padx=(10, 0))
+        credential_actions = ctk.CTkFrame(grid, fg_color="transparent")
+        credential_actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self._secondary_button(credential_actions, "Salvar acesso", self.save_credentials, width=145).pack(side="left", padx=(0, 10))
+        self._secondary_button(credential_actions, "Limpar acesso", self.clear_credentials, width=145).pack(side="left")
 
     def _build_plan_section(self, parent) -> None:
         section = self._create_section(parent, 2, "Planilha e Fluxo")

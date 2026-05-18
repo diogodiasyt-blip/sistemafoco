@@ -16,6 +16,10 @@ from urllib.parse import quote
 import pythoncom
 import win32com.client as win32
 from openpyxl import Workbook, load_workbook
+try:
+    import keyring
+except Exception:
+    keyring = None
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -73,6 +77,8 @@ class BarraProgressoAdapter:
 
 
 class RoboCobrancaMensalApp:
+    CREDENTIAL_SERVICE = "SistemaFOCO"
+    CREDENTIAL_MODULE_KEY = "cobranca_coral"
     MAIN_BG = "#f6f4f1"
     CARD_BG = "#ffffff"
     CARD_BORDER = "#eadfdb"
@@ -337,6 +343,51 @@ class RoboCobrancaMensalApp:
     # =========================
     # INTERFACE
     # =========================
+    def chave_credencial(self, sufixo):
+        return f"{self.CREDENTIAL_MODULE_KEY}:{sufixo}"
+
+    def carregar_credenciais_salvas(self):
+        if keyring is None:
+            return
+        try:
+            usuario = keyring.get_password(self.CREDENTIAL_SERVICE, self.chave_credencial("usuario")) or ""
+            senha = keyring.get_password(self.CREDENTIAL_SERVICE, self.chave_credencial("senha")) or ""
+            if usuario:
+                self.entry_usuario.delete(0, "end")
+                self.entry_usuario.insert(0, usuario)
+            if senha:
+                self.entry_senha.delete(0, "end")
+                self.entry_senha.insert(0, senha)
+        except Exception:
+            pass
+
+    def salvar_credenciais(self):
+        if keyring is None:
+            messagebox.showwarning("Salvar acesso", "Biblioteca keyring nao esta disponivel neste ambiente.")
+            return
+        usuario = self.entry_usuario.get().strip()
+        senha = self.entry_senha.get().strip()
+        if not usuario or not senha:
+            messagebox.showwarning("Salvar acesso", "Preencha usuario e senha antes de salvar.")
+            return
+        try:
+            keyring.set_password(self.CREDENTIAL_SERVICE, self.chave_credencial("usuario"), usuario)
+            keyring.set_password(self.CREDENTIAL_SERVICE, self.chave_credencial("senha"), senha)
+            messagebox.showinfo("Salvar acesso", "Usuario e senha salvos neste computador.")
+        except Exception as exc:
+            messagebox.showerror("Salvar acesso", f"Nao foi possivel salvar o acesso:\n{exc}")
+
+    def limpar_credenciais(self):
+        if keyring is not None:
+            for sufixo in ("usuario", "senha"):
+                try:
+                    keyring.delete_password(self.CREDENTIAL_SERVICE, self.chave_credencial(sufixo))
+                except Exception:
+                    pass
+        self.entry_usuario.delete(0, "end")
+        self.entry_senha.delete(0, "end")
+        messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
+
     def criar_secao_card(self, parent, titulo):
         frame = ctk.CTkFrame(
             parent,
@@ -426,6 +477,37 @@ class RoboCobrancaMensalApp:
         self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 10))
         self.entry_senha = ctk.CTkEntry(login_grid, height=42, corner_radius=12, show="*")
         self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+        credenciais_box = ctk.CTkFrame(login_grid, fg_color="transparent")
+        credenciais_box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Salvar acesso",
+            command=self.salvar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=self.PRIMARY_TEXT,
+            hover_color=self.SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Limpar acesso",
+            command=self.limpar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=self.PRIMARY_TEXT,
+            hover_color=self.SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
+        self.carregar_credenciais_salvas()
 
         frame_config = self.criar_secao_card(topo_cobranca, "Configuracoes")
         frame_config.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=(0, 10))

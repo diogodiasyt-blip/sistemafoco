@@ -11,6 +11,10 @@ import customtkinter as ctk
 import multiprocessing
 import pandas as pd
 import winsound
+try:
+    import keyring
+except Exception:
+    keyring = None
 from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -38,6 +42,8 @@ URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
 XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
 XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
+APP_CREDENTIAL_SERVICE = "SistemaFOCO"
+CREDENTIAL_MODULE_KEY = "contratos_coral"
 
 
 def localizar_logo():
@@ -377,7 +383,51 @@ class RoboContratosApp:
         self.logo_image = None
         self.logo_label = None
 
+        self.carregar_credenciais_salvas()
         self.create_widgets()
+
+    def chave_credencial(self, sufixo):
+        return f"{CREDENTIAL_MODULE_KEY}:{sufixo}"
+
+    def carregar_credenciais_salvas(self):
+        if keyring is None:
+            return
+        try:
+            usuario = keyring.get_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("usuario")) or ""
+            senha = keyring.get_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("senha")) or ""
+            if usuario:
+                self.usuario_var.set(usuario)
+            if senha:
+                self.senha_var.set(senha)
+        except Exception:
+            pass
+
+    def salvar_credenciais(self):
+        if keyring is None:
+            messagebox.showwarning("Salvar acesso", "Biblioteca keyring nao esta disponivel neste ambiente.")
+            return
+        usuario = self.usuario_var.get().strip()
+        senha = self.senha_var.get().strip()
+        if not usuario or not senha:
+            messagebox.showwarning("Salvar acesso", "Preencha usuario e senha antes de salvar.")
+            return
+        try:
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("usuario"), usuario)
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("senha"), senha)
+            messagebox.showinfo("Salvar acesso", "Usuario e senha salvos neste computador.")
+        except Exception as exc:
+            messagebox.showerror("Salvar acesso", f"Nao foi possivel salvar o acesso:\n{exc}")
+
+    def limpar_credenciais(self):
+        if keyring is not None:
+            for sufixo in ("usuario", "senha"):
+                try:
+                    keyring.delete_password(APP_CREDENTIAL_SERVICE, self.chave_credencial(sufixo))
+                except Exception:
+                    pass
+        self.usuario_var.set("")
+        self.senha_var.set("")
+        messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
 
     def carregar_logo(self, reducao=2):
         caminho_logo = localizar_logo()
@@ -470,6 +520,36 @@ class RoboContratosApp:
         self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 10))
         self.entry_senha = ctk.CTkEntry(acesso_grid, textvariable=self.senha_var, show="*", height=42, corner_radius=12)
         self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+        credenciais_box = ctk.CTkFrame(acesso_grid, fg_color="transparent")
+        credenciais_box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Salvar acesso",
+            command=self.salvar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=PRIMARY_TEXT,
+            hover_color=SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Limpar acesso",
+            command=self.limpar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=PRIMARY_TEXT,
+            hover_color=SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
 
         config = self.criar_secao(scroll, "Configuracoes")
         self.check_headless = ctk.CTkCheckBox(

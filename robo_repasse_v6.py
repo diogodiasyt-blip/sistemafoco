@@ -10,6 +10,10 @@ import sys
 import threading
 import time
 from pathlib import Path
+try:
+    import keyring
+except Exception:
+    keyring = None
 
 # ====================== SELENIUM ======================
 from selenium import webdriver
@@ -28,6 +32,8 @@ URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
 XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
 XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
+APP_CREDENTIAL_SERVICE = "SistemaFOCO"
+CREDENTIAL_MODULE_KEY = "repasse_coral"
 
 COLUNAS = {
     "status": 3,
@@ -108,9 +114,53 @@ class AppRepasse:
         self.caminho_relatorio_parcial = None
         self.tentativas_do_contrato_atual = 0
 
+        self.carregar_credenciais_salvas()
         self.configurar_estilo()
         self.criar_interface()
         self.validar_abertura()
+
+    def chave_credencial(self, sufixo):
+        return f"{CREDENTIAL_MODULE_KEY}:{sufixo}"
+
+    def carregar_credenciais_salvas(self):
+        if keyring is None:
+            return
+        try:
+            usuario = keyring.get_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("usuario")) or ""
+            senha = keyring.get_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("senha")) or ""
+            if usuario:
+                self.usuario.set(usuario)
+            if senha:
+                self.senha.set(senha)
+        except Exception:
+            pass
+
+    def salvar_credenciais(self):
+        if keyring is None:
+            messagebox.showwarning("Salvar acesso", "Biblioteca keyring nao esta disponivel neste ambiente.")
+            return
+        usuario = self.usuario.get().strip()
+        senha = self.senha.get().strip()
+        if not usuario or not senha:
+            messagebox.showwarning("Salvar acesso", "Preencha usuario e senha antes de salvar.")
+            return
+        try:
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("usuario"), usuario)
+            keyring.set_password(APP_CREDENTIAL_SERVICE, self.chave_credencial("senha"), senha)
+            messagebox.showinfo("Salvar acesso", "Usuario e senha salvos neste computador.")
+        except Exception as exc:
+            messagebox.showerror("Salvar acesso", f"Nao foi possivel salvar o acesso:\n{exc}")
+
+    def limpar_credenciais(self):
+        if keyring is not None:
+            for sufixo in ("usuario", "senha"):
+                try:
+                    keyring.delete_password(APP_CREDENTIAL_SERVICE, self.chave_credencial(sufixo))
+                except Exception:
+                    pass
+        self.usuario.set("")
+        self.senha.set("")
+        messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
 
     def configurar_estilo(self):
         style = ttk.Style()
@@ -189,6 +239,36 @@ class AppRepasse:
         self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 10))
         self.entry_senha = ctk.CTkEntry(acesso_grid, textvariable=self.senha, show="*", height=42, corner_radius=12)
         self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+        credenciais_box = ctk.CTkFrame(acesso_grid, fg_color="transparent")
+        credenciais_box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Salvar acesso",
+            command=self.salvar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=PRIMARY_TEXT,
+            hover_color=SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            credenciais_box,
+            text="Limpar acesso",
+            command=self.limpar_credenciais,
+            height=36,
+            width=145,
+            corner_radius=12,
+            fg_color="#ffffff",
+            text_color=PRIMARY_TEXT,
+            hover_color=SOFT_RED,
+            border_width=1,
+            border_color="#f0d7d2",
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
 
         planilha = self.criar_secao(scroll, "Planilha de Repasses")
         planilha_form = ctk.CTkFrame(planilha, fg_color="transparent")

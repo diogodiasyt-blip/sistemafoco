@@ -1,66 +1,66 @@
-{
-  "launcher_version": "1.0.0",
-  "cobranca": {
-    "arquivo": "bot_cobranca_mensal_v1.py",
-    "classe": "RoboCobrancaMensalApp",
-    "versao": "1.1.1"
-  },
-  "repasse": {
-    "arquivo": "robo_repasse_v6.py",
-    "classe": "AppRepasse",
-    "versao": "1.1.1"
-  },
-  "contratos": {
-    "arquivo": "bot_contratos.py",
-    "classe": "RoboContratosApp",
-    "versao": "1.1.2"
-  },
-  "faturamento": {
-    "arquivo": "robo_faturamento_v1.py",
-    "classe": "BillingApp",
-    "versao": "1.0.18",
-    "constructor_mode": "external_process",
-    "title": "Robo de Faturamento",
-    "geometry": "1180x760",
-    "resizable": true,
-    "card_title": "Faturamento",
-    "description": "Faturamento de avarias no Protheus com validacao da planilha, progresso e relatorio em tempo real.",
-    "tutorial_file": "tutorial_faturamento.txt"
-  },
-  "cobcloud": {
-    "arquivo": "robo_cobcloud.py",
-    "classe": "RoboCobCloudApp",
-    "versao": "1.0.3",
-    "constructor_mode": "external_process",
-    "title": "Robo CobCloud",
-    "geometry": "980x760",
-    "resizable": true,
-    "card_title": "CobCloud",
-    "description": "Negativacao de cadastros sem endereco no CobCloud, com checkpoint e relatorio em tempo real.",
-    "tutorial_file": "tutorial_cobcloud.txt"
-  },
-  "cobranca_cartoes": {
-    "arquivo": "robo_cobranca_cartoes_v1.py",
-    "classe": "RoboCobrancaCartoesApp",
-    "versao": "1.0.4",
-    "constructor_mode": "external_process",
-    "title": "Robo de Cobranca de Cartoes",
-    "geometry": "1120x760",
-    "resizable": true,
-    "card_title": "Cartoes",
-    "description": "Cobranca de contratos pendentes por cartao no Coral, com relatorio em tempo real.",
-    "tutorial_file": "tutorial_cobranca_cartoes.txt"
-  },
-  "relatorio_coral": {
-    "arquivo": "robo_relatorio_coral_v1.py",
-    "classe": "RoboRelatorioCoralApp",
-    "versao": "1.0.2",
-    "constructor_mode": "external_process",
-    "title": "Robo de Relatorio Coral",
-    "geometry": "660x470",
-    "resizable": true,
-    "card_title": "Relatorio Coral",
-    "description": "Emissao de relatorio no Coral com download CSV e conversao automatica para Excel.",
-    "show_support_buttons": false
-  }
+﻿{
+    "launcher_version":  "1.0.0",
+    "cobranca":  {
+                     "arquivo":  "bot_cobranca_mensal_v1.py",
+                     "classe":  "RoboCobrancaMensalApp",
+                     "versao":  "1.1.2"
+                 },
+    "repasse":  {
+                    "arquivo":  "robo_repasse_v6.py",
+                    "classe":  "AppRepasse",
+                    "versao":  "1.1.2"
+                },
+    "contratos":  {
+                      "arquivo":  "bot_contratos.py",
+                      "classe":  "RoboContratosApp",
+                      "versao":  "1.1.3"
+                  },
+    "faturamento":  {
+                        "arquivo":  "robo_faturamento_v1.py",
+                        "classe":  "BillingApp",
+                        "versao":  "1.0.19",
+                        "constructor_mode":  "external_process",
+                        "title":  "Robo de Faturamento",
+                        "geometry":  "1180x760",
+                        "resizable":  true,
+                        "card_title":  "Faturamento",
+                        "description":  "Faturamento de avarias no Protheus com validacao da planilha, progresso e relatorio em tempo real.",
+                        "tutorial_file":  "tutorial_faturamento.txt"
+                    },
+    "cobcloud":  {
+                     "arquivo":  "robo_cobcloud.py",
+                     "classe":  "RoboCobCloudApp",
+                     "versao":  "1.0.3",
+                     "constructor_mode":  "external_process",
+                     "title":  "Robo CobCloud",
+                     "geometry":  "980x760",
+                     "resizable":  true,
+                     "card_title":  "CobCloud",
+                     "description":  "Negativacao de cadastros sem endereco no CobCloud, com checkpoint e relatorio em tempo real.",
+                     "tutorial_file":  "tutorial_cobcloud.txt"
+                 },
+    "cobranca_cartoes":  {
+                             "arquivo":  "robo_cobranca_cartoes_v1.py",
+                             "classe":  "RoboCobrancaCartoesApp",
+                             "versao":  "1.0.3",
+                             "constructor_mode":  "external_process",
+                             "title":  "Robo de Cobranca de Cartoes",
+                             "geometry":  "1120x760",
+                             "resizable":  true,
+                             "card_title":  "Cartoes",
+                             "description":  "Cobranca de contratos pendentes por cartao no Coral, com relatorio em tempo real.",
+                             "tutorial_file":  "tutorial_cobranca_cartoes.txt"
+                         },
+    "relatorio_coral":  {
+                            "arquivo":  "robo_relatorio_coral_v1.py",
+                            "classe":  "RoboRelatorioCoralApp",
+                            "versao":  "1.0.1",
+                            "constructor_mode":  "external_process",
+                            "title":  "Robo de Relatorio Coral",
+                            "geometry":  "660x470",
+                            "resizable":  true,
+                            "card_title":  "Relatorio Coral",
+                            "description":  "Emissao de relatorio no Coral com download CSV e conversao automatica para Excel.",
+                            "show_support_buttons":  false
+                        }
 }

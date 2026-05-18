@@ -49,7 +49,7 @@ PRIMARY_TEXT = "#d81919"
 MUTED_TEXT = "#5c5c5c"
 BUTTON_BG = "#ef1a14"
 BUTTON_ACTIVE_BG = "#c91410"
-SOFT_RED = "#fff1f0"
+SOFT_RED = "#fff1ef"
 SUCCESS_GREEN = "#0f8a4b"
 WARNING_ORANGE = "#b96a10"
 
@@ -146,7 +146,7 @@ def read_coral_csv(csv_path: Path) -> pd.DataFrame:
     errors: list[str] = []
     for encoding in ("utf-8-sig", "utf-8", "latin1"):
         try:
-            dataframe = pd.read_csv(csv_path, sep=",", decimal=".", encoding=encoding, dtype=str)
+            dataframe = pd.read_csv(csv_path, sep=",", decimal=".", encoding=encoding)
             return normalize_numeric_columns(dataframe)
         except Exception as exc:
             errors.append(f"{encoding}: {exc}")
