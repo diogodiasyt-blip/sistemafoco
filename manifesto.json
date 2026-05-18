@@ -54,7 +54,7 @@
   "relatorio_coral": {
     "arquivo": "robo_relatorio_coral_v1.py",
     "classe": "RoboRelatorioCoralApp",
-    "versao": "1.0.1",
+    "versao": "1.0.2",
     "constructor_mode": "external_process",
     "title": "Robo de Relatorio Coral",
     "geometry": "660x470",
