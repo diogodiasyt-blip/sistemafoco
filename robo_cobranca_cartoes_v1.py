@@ -655,6 +655,18 @@ class RoboCobrancaCartoesApp(ctk.CTk):
                 time.sleep(1)
         raise RuntimeError(f"Nao foi possivel selecionar {description} apos 3 tentativas: {last_error}")
 
+    def _validate_prefilled_modal_value(self, expected_balance: object, timeout: int = 30) -> str:
+        expected_text = self._format_money_for_coral(expected_balance)
+        current_value = self._read_input_value(XPATH_VALOR_MODAL, "valor ja preenchido no modal", timeout=timeout)
+
+        if not self._money_values_match(expected_text, current_value):
+            raise RuntimeError(
+                f"Valor do modal diverge do saldo validado. Esperado {expected_text}, lido {current_value or '<vazio>'}."
+            )
+
+        self.log(f"Valor do modal validado sem redigitar: esperado {expected_text} | lido {current_value}")
+        return current_value
+
     @staticmethod
     def _format_money_for_coral(value: object) -> str:
         return f"{parse_money_value(value):.2f}".replace(".", ",")
@@ -857,7 +869,7 @@ class RoboCobrancaCartoesApp(ctk.CTk):
                     self._open_contract_payment_modal(contract_number)
 
                 self._select_card_by_index(card_index, timeout=30)
-                self._fill_and_validate_money(XPATH_VALOR_MODAL, balance_text, "campo Valor", timeout=30)
+                self._validate_prefilled_modal_value(balance_text, timeout=30)
                 self._safe_select_value(XPATH_PARCELAMENTO, "1", "parcelamento 1x", timeout=30)
                 current_value = self._read_input_value(XPATH_VALOR_MODAL, "campo Valor", timeout=10)
                 if not self._money_values_match(balance_text, current_value):
