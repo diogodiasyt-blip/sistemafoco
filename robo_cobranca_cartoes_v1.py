@@ -25,16 +25,9 @@ from selenium.webdriver.support.ui import Select
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
-try:
-    import keyring
-except Exception:
-    keyring = None
-
 
 APP_TITLE = "Robo de Cobranca de Cartoes"
 APP_GEOMETRY = "1120x760"
-APP_CREDENTIAL_SERVICE = "SistemaFOCO"
-CREDENTIAL_MODULE_KEY = "cobranca_cartoes_coral"
 
 URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
 URL_PING_ABERTURA = "https://docs.google.com/forms/d/e/1FAIpQLScmxNbTO-vXw0LEOKIyEhSpIl9aTbw8x5hnEI5VY2eVMRh5gQ/formResponse"
@@ -153,7 +146,6 @@ class RoboCobrancaCartoesApp(ctk.CTk):
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.logo_image = self._load_logo()
 
-        self._load_saved_credentials()
         self._build_layout()
         self._update_action_buttons()
         self.after(150, self._drain_log_queue)
@@ -258,11 +250,6 @@ class RoboCobrancaCartoesApp(ctk.CTk):
             hover_color=BUTTON_ACTIVE_BG,
             border_color=CARD_BORDER,
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
-
-        credential_actions = ctk.CTkFrame(content, fg_color="transparent")
-        credential_actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
-        self._secondary_button(credential_actions, "Salvar acesso", self.save_credentials, width=150).pack(side="left", padx=(0, 10))
-        self._secondary_button(credential_actions, "Limpar acesso", self.clear_credentials, width=150).pack(side="left")
 
     def _build_indicator_section(self, parent) -> None:
         section = self._create_section(parent, 3, "Indicadores da planilha")
@@ -391,62 +378,6 @@ class RoboCobrancaCartoesApp(ctk.CTk):
         self.status_var.set("Planilha selecionada. Clique em Validar planilha.")
         self.log(f"Planilha selecionada: {file_path}")
         self._update_action_buttons()
-
-    def _credential_key(self, suffix: str) -> str:
-        return f"{CREDENTIAL_MODULE_KEY}:{suffix}"
-
-    def _load_saved_credentials(self) -> None:
-        if keyring is None:
-            return
-        try:
-            username = keyring.get_password(APP_CREDENTIAL_SERVICE, self._credential_key("usuario")) or ""
-            password = keyring.get_password(APP_CREDENTIAL_SERVICE, self._credential_key("senha")) or ""
-            if username:
-                self.username_var.set(username)
-            if password:
-                self.password_var.set(password)
-        except Exception:
-            pass
-
-    def save_credentials(self) -> None:
-        if keyring is None:
-            messagebox.showwarning(
-                "Salvar acesso",
-                "O recurso de cofre de credenciais nao esta disponivel neste computador.",
-            )
-            return
-
-        username = self.username_var.get().strip()
-        password = self.password_var.get().strip()
-        if not username or not password:
-            messagebox.showwarning("Salvar acesso", "Preencha usuario e senha antes de salvar.")
-            return
-
-        try:
-            keyring.set_password(APP_CREDENTIAL_SERVICE, self._credential_key("usuario"), username)
-            keyring.set_password(APP_CREDENTIAL_SERVICE, self._credential_key("senha"), password)
-            self.log("Acesso salvo no cofre de credenciais do Windows.")
-            messagebox.showinfo("Salvar acesso", "Usuario e senha salvos neste computador.")
-        except Exception as exc:
-            self.log(f"Falha ao salvar credenciais: {exc}")
-            messagebox.showerror("Salvar acesso", f"Nao foi possivel salvar o acesso:\n{exc}")
-
-    def clear_credentials(self) -> None:
-        if keyring is None:
-            self.username_var.set("")
-            self.password_var.set("")
-            messagebox.showinfo("Limpar acesso", "Campos de acesso limpos.")
-            return
-
-        for suffix in ("usuario", "senha"):
-            try:
-                keyring.delete_password(APP_CREDENTIAL_SERVICE, self._credential_key(suffix))
-            except Exception:
-                pass
-        self.username_var.set("")
-        self.password_var.set("")
-        self.log("Acesso removido do cofre de credenciais.")
-        messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
 
     def validate_workbook(self) -> None:
         path_text = self.file_path_var.get().strip()
