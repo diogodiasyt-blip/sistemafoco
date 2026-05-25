@@ -18,7 +18,7 @@
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
     "classe": "BillingApp",
-    "versao": "1.0.20",
+    "versao": "1.0.19",
     "constructor_mode": "external_process",
     "title": "Robo de Faturamento",
     "geometry": "1180x760",
@@ -50,6 +50,21 @@
     "card_title": "Cartoes",
     "description": "Cobranca de contratos pendentes por cartao no Coral, com relatorio em tempo real.",
     "tutorial_file": "tutorial_cobranca_cartoes.txt"
+  },
+  "cobcloud_baixa_pagamentos": {
+    "arquivo": "robo_cobcloud_baixa_pagamentos_v1.py",
+    "classe": "RoboCobCloudBaixaPagamentosApp",
+    "versao": "1.0.0",
+    "constructor_mode": "external_process",
+    "title": "Robo CobCloud - Baixa de Pagamentos",
+    "geometry": "1040x760",
+    "resizable": true,
+    "card_title": "Baixa de Pagamentos",
+    "description": "Lancamento e baixa de recebimentos no CobCloud, com retorno de boletos bancarios.",
+    "tutorial_file": "tutorial_cobcloud_baixa_pagamentos.txt",
+    "show_support_buttons": true,
+    "show_model_button": false,
+    "content_y_offset": 12
   },
   "relatorio_coral": {
     "arquivo": "robo_relatorio_coral_v1.py",
