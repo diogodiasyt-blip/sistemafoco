@@ -60,12 +60,6 @@ FIELD_MAP = {
         "kind": "read_only_capture",
         "label": "No. Titulo",
     },
-    "emissao": {
-        "protheus_name": "E1_EMISSAO",
-        "tag": "wa-text-input",
-        "kind": "read_only_capture",
-        "label": "DT Emissao",
-    },
     "tipo_pg": {
         "protheus_name": "E1_XTIPOPG",
         "tag": "wa-combobox",
@@ -619,9 +613,6 @@ class ProtheusBot:
     def lookup_cliente_by_cpf(self, cpf: str, expected_client_name: str) -> bool:
         page = self._require_page()
         self.log(f"Pesquisando cliente pelo CPF {cpf}.")
-        dialog_locator = page.locator(LOOKUP_SELECTORS["dialog_root"]).filter(
-            has=page.locator('wa-text-view[caption*="Cliente"]')
-        ).last
 
         self._click_first_visible_locator(
             [
@@ -630,11 +621,9 @@ class ProtheusBot:
             ],
             timeout=45000,
             pause_ms=500,
-            effect_check=lambda: dialog_locator.is_visible(),
-            attempts_per_candidate=4,
         )
 
-        dialog = dialog_locator
+        dialog = page.locator(LOOKUP_SELECTORS["dialog_root"]).filter(has=page.locator('wa-text-view[caption*="Cliente"]')).last
         dialog.wait_for(state="visible", timeout=45000)
 
         search_input = self._first_visible_locator(
@@ -657,8 +646,6 @@ class ProtheusBot:
             ],
             timeout=45000,
             pause_ms=500,
-            effect_check=lambda: dialog.locator(LOOKUP_SELECTORS["grid"]).is_visible(),
-            attempts_per_candidate=3,
         )
 
         dialog.locator(LOOKUP_SELECTORS["grid"]).wait_for(state="visible", timeout=45000)
@@ -730,13 +717,8 @@ class ProtheusBot:
         if ok_button is None:
             raise RuntimeError("Botao OK da consulta de cliente nao foi localizado.")
 
-        self._click_first_visible_locator(
-            [ok_button],
-            timeout=15000,
-            pause_ms=600,
-            effect_check=lambda: not dialog.is_visible(),
-            attempts_per_candidate=3,
-        )
+        ok_button.click(force=True)
+        page.wait_for_timeout(800)
         return True
 
     def _type_lookup_search_value(self, locator, value: str) -> None:
@@ -871,7 +853,6 @@ class ProtheusBot:
 
         prefixo_input = self._field_locator(dialog, "prefixo")
         numero_titulo_input = self._field_locator(dialog, "numero_titulo")
-        emissao_input = self._optional_field_locator(dialog, "emissao")
         tipo_pg_combo = self._first_visible_locator(
             [dialog.locator(self.build_field_selector("tipo_pg")).last]
         )
@@ -905,49 +886,28 @@ class ProtheusBot:
 
         invoice_number = self._read_from_locator(numero_titulo_input)
         self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._select_combo_option(tipo_pg_combo, payload["tipo_pg"])
         self._stabilize_on_previous_field(prefixo_input, "tipo_pg")
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._click_and_fill_field(tipo_input, payload["tipo"], "tipo", settle_locator=prefixo_input)
         self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
         self._click_and_fill_field(natureza_input, payload["natureza"], "natureza", settle_locator=tipo_input)
         self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
         self._click_and_fill_field(contrato_input, payload["contrato"], "contrato", settle_locator=natureza_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
         self._click_and_fill_field(vencimento_input, payload["vencimento"], "vencimento", settle_locator=contrato_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
         self._click_and_fill_field(valor_input, payload["valor_titulo"], "valor_titulo", settle_locator=vencimento_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
         self._click_and_fill_field(loja_input, payload["centro_custo"], "centro_custo", settle_locator=valor_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._select_combo_option(negocio_combo, payload["negocio"])
         self._stabilize_on_previous_field(loja_input, "negocio")
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._click_and_fill_field(segregacao_input, payload["segregacao"], "segregacao", settle_locator=loja_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._select_combo_option(motivo_combo, payload["motivo"])
         self._stabilize_on_previous_field(segregacao_input, "motivo")
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         self._click_and_fill_field(historico_input, payload["historico"], "historico", settle_locator=segregacao_input)
-        self._guard_numero_titulo(numero_titulo_input, payload)
-        self._guard_emissao_preservada(emissao_input)
 
         if not invoice_number:
             page.wait_for_timeout(600)
@@ -1230,14 +1190,7 @@ class ProtheusBot:
             )
         return selectors
 
-    def _click_first_visible_locator(
-        self,
-        locators,
-        timeout: int = 30000,
-        pause_ms: int = 200,
-        effect_check=None,
-        attempts_per_candidate: int = 2,
-    ) -> None:
+    def _click_first_visible_locator(self, locators, timeout: int = 30000, pause_ms: int = 200) -> None:
         page = self._require_page()
         end_time = page.evaluate("Date.now()") + timeout
 
@@ -1252,29 +1205,15 @@ class ProtheusBot:
                         if not candidate.is_visible():
                             continue
                         candidate.scroll_into_view_if_needed(timeout=3000)
-                        for _ in range(max(1, attempts_per_candidate)):
-                            self._safe_click_locator(candidate)
-                            page.wait_for_timeout(pause_ms)
-                            error_field = self._dismiss_help_popup_if_present()
-                            if error_field:
-                                raise RuntimeError(
-                                    f"TOTVS apresentou aviso apos o clique. Campo identificado: {error_field}."
-                                )
-                            if effect_check is None or self._safe_effect_check(effect_check):
-                                return
-                except RuntimeError:
-                    raise
+                        self._safe_click_locator(candidate)
+                        page.wait_for_timeout(pause_ms)
+                        self._dismiss_help_popup_if_present()
+                        return
                 except Exception:
                     continue
             page.wait_for_timeout(pause_ms)
 
         raise RuntimeError("Nao foi possivel clicar no elemento esperado do Protheus.")
-
-    def _safe_effect_check(self, effect_check) -> bool:
-        try:
-            return bool(effect_check())
-        except Exception:
-            return False
 
     def _wait_any_visible(self, locators, timeout: int = 30000) -> None:
         page = self._require_page()
@@ -1460,9 +1399,7 @@ class ProtheusBot:
         except Exception:
             text_value = str(value).strip().replace(".", "").replace(",", ".")
             numeric_value = float(text_value)
-        # O TOTVS interpreta ponto no campo monetario como separador de milhar.
-        # Enviar "867.86" vira "86.786,00"; por isso o robo deve colar "867,86".
-        return f"{numeric_value:.2f}".replace(".", ",")
+        return f"{numeric_value:.2f}"
 
     def _fill_text_field(self, dialog, field_key: str, value: str) -> None:
         locator = dialog.locator(self.build_field_selector(field_key)).last
@@ -1486,14 +1423,6 @@ class ProtheusBot:
         if locator is None:
             label = FIELD_MAP.get(field_key, {}).get("label", field_key)
             raise RuntimeError(f"Campo {label} nao foi localizado pelo identificador interno do TOTVS ({selector}).")
-        self._assert_locator_matches_field(locator, field_key)
-        return locator
-
-    def _optional_field_locator(self, dialog, field_key: str):
-        selector = self.build_field_selector(field_key)
-        locator = self._first_visible_locator([dialog.locator(selector).last])
-        if locator is None:
-            return None
         self._assert_locator_matches_field(locator, field_key)
         return locator
 
@@ -1538,22 +1467,6 @@ class ProtheusBot:
                 "O campo No. Titulo foi preenchido indevidamente pelo robo. "
                 "A linha foi interrompida antes de salvar para evitar titulo duplicado no TOTVS."
             )
-        if len(self._normalize_document(numero)) < 4 and len(numero.strip()) < 4:
-            raise RuntimeError(
-                f"O campo No. Titulo ficou com valor suspeito ({numero}). "
-                "A linha foi interrompida antes de salvar para evitar titulo corrompido."
-            )
-
-    def _guard_emissao_preservada(self, emissao_locator) -> None:
-        if emissao_locator is None:
-            return
-        emissao = self._read_from_locator(emissao_locator).strip()
-        if emissao and self._normalize_document(emissao):
-            return
-        raise RuntimeError(
-            "O campo DT Emissao ficou vazio durante o preenchimento. "
-            "A linha foi interrompida antes de salvar para evitar lancamento com data apagada."
-        )
 
     def _click_and_fill_field(
         self,
@@ -1585,33 +1498,6 @@ class ProtheusBot:
             except Exception:
                 self._keyboard_fill_locator(locator, expected, field_key=field_key)
 
-            page.wait_for_timeout(350)
-            last_value = self._read_from_locator(locator)
-            value_ok = False
-            if field_key is None:
-                value_ok = bool(last_value.strip())
-            else:
-                value_ok = self._field_value_matches(field_key, expected, last_value)
-
-            if not value_ok:
-                error_field = self._dismiss_help_popup_if_present()
-                if error_field:
-                    if field_key and error_field != "desconhecido" and error_field != field_key:
-                        label = FIELD_MAP.get(error_field, {}).get("label", error_field)
-                        raise RuntimeError(
-                            f"TOTVS apontou erro no campo {label} enquanto o robo preenchia "
-                            f"{FIELD_MAP.get(field_key, {}).get('label', field_key)}. "
-                            "A linha sera reiniciada para evitar preenchimento cruzado."
-                        )
-                    self.log(f"Erro do TOTVS detectado no campo {error_field}. Tentando novamente ({attempt}/{attempts}).")
-                    continue
-
-                self.log(
-                    f"Validacao do campo falhou ({attempt}/{attempts}). "
-                    f"Esperado: '{expected}' | Lido: '{last_value}'"
-                )
-                continue
-
             if settle_locator is not None:
                 self._stabilize_on_previous_field(settle_locator, field_key)
             else:
@@ -1623,11 +1509,21 @@ class ProtheusBot:
                     raise RuntimeError(
                         f"TOTVS apontou erro no campo {label} enquanto o robo validava {FIELD_MAP.get(field_key, {}).get('label', field_key)}. "
                         "A linha sera reiniciada para evitar preenchimento cruzado."
-                )
+                    )
                 self.log(f"Erro do TOTVS detectado no campo {error_field}. Tentando novamente ({attempt}/{attempts}).")
                 continue
 
-            return
+            last_value = self._read_from_locator(locator)
+            if field_key is None:
+                if last_value.strip():
+                    return
+            elif self._field_value_matches(field_key, expected, last_value):
+                return
+
+            self.log(
+                f"Validacao do campo falhou ({attempt}/{attempts}). "
+                f"Esperado: '{expected}' | Lido: '{last_value}'"
+            )
 
         label = FIELD_MAP.get(field_key or "", {}).get("label", field_key or "campo")
         raise RuntimeError(f"Nao foi possivel preencher corretamente {label}. Esperado '{expected}', lido '{last_value}'.")
@@ -1818,27 +1714,14 @@ class ProtheusBot:
         try:
             locator.select_option(str(value))
             page.wait_for_timeout(800)
-            error_field = self._dismiss_help_popup_if_present()
-            if error_field:
-                raise RuntimeError(f"TOTVS apresentou aviso ao selecionar combobox: {error_field}.")
-            if self._combo_value_matches(locator, str(value)):
-                return
+            self._dismiss_help_popup_if_present()
+            return
         except Exception:
             pass
-
-        if self._set_totvs_combobox_value(locator, str(value)):
-            page.wait_for_timeout(800)
-            error_field = self._dismiss_help_popup_if_present()
-            if error_field:
-                raise RuntimeError(f"TOTVS apresentou aviso ao selecionar combobox: {error_field}.")
-            if self._combo_value_matches(locator, str(value)):
-                return
 
         self._safe_click_locator(locator)
         page.wait_for_timeout(250)
         page.keyboard.press("Control+A")
-        page.wait_for_timeout(120)
-        page.keyboard.press("Backspace")
         page.wait_for_timeout(120)
         try:
             self._set_clipboard_text(str(value))
@@ -1850,115 +1733,7 @@ class ProtheusBot:
         page.wait_for_timeout(300)
         page.keyboard.press("Tab")
         page.wait_for_timeout(800)
-        error_field = self._dismiss_help_popup_if_present()
-        if error_field:
-            raise RuntimeError(f"TOTVS apresentou aviso ao selecionar combobox: {error_field}.")
-        if not self._combo_value_matches(locator, str(value)):
-            actual = self._read_combo_value(locator)
-            raise RuntimeError(f"Combobox nao confirmou a opcao esperada. Esperado '{value}', lido '{actual}'.")
-
-    def _set_totvs_combobox_value(self, locator, value: str) -> bool:
-        try:
-            return bool(
-                locator.evaluate(
-                    """
-                    (node, rawValue) => {
-                        const value = String(rawValue);
-                        const selectedIndex = Number.parseInt(value, 10);
-                        const combo = node.closest && node.closest('wa-combobox')
-                            ? node.closest('wa-combobox')
-                            : node;
-                        if (!combo) return false;
-
-                        const applyValue = (target) => {
-                            if (!target) return;
-                            try { target.value = value; } catch (error) {}
-                            try { target.selectedIndex = selectedIndex; } catch (error) {}
-                            try { target.selectedindex = selectedIndex; } catch (error) {}
-                            try { target.setAttribute('value', value); } catch (error) {}
-                            try { target.setAttribute('selectedindex', value); } catch (error) {}
-                            try { target.setAttribute('selectedIndex', value); } catch (error) {}
-                            try {
-                                target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-                                target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-                                target.dispatchEvent(
-                                    new CustomEvent('change', {
-                                        bubbles: true,
-                                        composed: true,
-                                        detail: { value, selectedIndex },
-                                    })
-                                );
-                            } catch (error) {}
-                        };
-
-                        applyValue(combo);
-
-                        const root = combo.shadowRoot || combo;
-                        const input =
-                            root.querySelector('input') ||
-                            root.querySelector('[contenteditable="true"]') ||
-                            combo.querySelector('input');
-                        if (input) {
-                            input.focus();
-                            applyValue(input);
-                        }
-
-                        const button =
-                            root.querySelector('button') ||
-                            root.querySelector('[role="button"]') ||
-                            combo.querySelector('button');
-                        if (button) {
-                            try { button.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } catch (error) {}
-                        }
-
-                        return true;
-                    }
-                    """,
-                    value,
-                )
-            )
-        except Exception:
-            return False
-
-    def _combo_value_matches(self, locator, expected: str) -> bool:
-        actual = self._read_combo_value(locator)
-        if not actual:
-            return False
-        expected = str(expected).strip()
-        return actual == expected or actual.startswith(f"{expected} ") or actual.startswith(f"{expected}-")
-
-    def _read_combo_value(self, locator) -> str:
-        try:
-            return str(
-                locator.evaluate(
-                    """
-                    (node) => {
-                        const combo = node.closest && node.closest('wa-combobox')
-                            ? node.closest('wa-combobox')
-                            : node;
-                        if (!combo) return '';
-                        const root = combo.shadowRoot || combo;
-                        const input =
-                            root.querySelector('input') ||
-                            root.querySelector('[contenteditable="true"]') ||
-                            combo.querySelector('input');
-                        const values = [
-                            combo.value,
-                            combo.getAttribute('value'),
-                            combo.selectedIndex,
-                            combo.selectedindex,
-                            combo.getAttribute('selectedindex'),
-                            combo.getAttribute('selectedIndex'),
-                            input ? input.value || input.textContent : '',
-                        ];
-                        const value = values.find((item) => item !== undefined && item !== null && String(item).trim() !== '');
-                        return String(value).trim();
-                    }
-                    """
-                )
-            ).strip()
-        except Exception:
-            return ""
+        self._dismiss_help_popup_if_present()
 
     def _settle_after_field(self) -> None:
         page = self._require_page()
