@@ -59,6 +59,19 @@ SUCCESS_TEXT = "#187a2f"
 SOFT_RED = "#fff1ef"
 
 
+def obter_current_url_segura(driver):
+    if driver is None:
+        return ""
+    try:
+        return driver.current_url or ""
+    except WebDriverException:
+        return ""
+
+
+def sessao_driver_ativa(driver):
+    return bool(obter_current_url_segura(driver))
+
+
 def localizar_logo():
     candidatos = []
     if getattr(sys, "_MEIPASS", None):
@@ -482,15 +495,14 @@ class AppRepasse:
 
                         if self.tentativas_do_contrato_atual > 0:
                             self.escrever_log("🔄 Erro anterior. Retornando para a URL base de contratos...")
-                            if self.driver:
-                                self.preparar_tela_contratos_para_proximo_loop()
-                            else:
-                                if not self.abrir_coral():
-                                    raise Exception("Falha ao abrir o Coral.")
-
-                        if not self.driver or not self.driver.current_url or "coral" not in self.driver.current_url:
+                        url_atual = obter_current_url_segura(self.driver)
+                        if not self.driver:
                             if not self.abrir_coral():
                                 raise Exception("Falha ao abrir o Coral.")
+                        elif not url_atual:
+                            raise Exception("Sessao do Chrome foi encerrada. Reinicie o robo para abrir um novo navegador.")
+
+                        self.preparar_tela_contratos_para_proximo_loop()
 
                         self.buscar_contrato_seguro(contrato_atual)
                         status_real = self.obter_status_real()
@@ -660,7 +672,10 @@ class AppRepasse:
                 self.clicar_seguro(By.XPATH, fechar_xpath, "Fechar")
                 time.sleep(PAUSA_MEDIA)
                 self.escrever_log(f"✅ Repasse concluído e modal fechado com sucesso → {contrato}")
-                self.preparar_tela_contratos_para_proximo_loop()
+                try:
+                    self.preparar_tela_contratos_para_proximo_loop()
+                except Exception as e:
+                    self.escrever_log(f"âš ï¸ Repasse jÃ¡ confirmado, mas o retorno para contratos falhou: {e}")
                 return True
             else:
                 self.escrever_log("⚠️ Modal de sucesso não apareceu. Tentando fluxo de descarte...")
@@ -684,7 +699,7 @@ class AppRepasse:
             return True
         except Exception as e:
             self.escrever_log(f"⚠️ Falha ao preparar tela: {e}")
-            return False
+            raise
 
     # ====================== OUTROS MÉTODOS ======================
     def filtrar_contratos_aptos(self, df):
