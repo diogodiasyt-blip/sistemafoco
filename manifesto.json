@@ -18,7 +18,7 @@
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
     "classe": "BillingApp",
-    "versao": "1.0.19",
+    "versao": "1.0.22",
     "constructor_mode": "external_process",
     "title": "Robo de Faturamento",
     "geometry": "1180x760",
@@ -76,6 +76,18 @@
     "resizable": true,
     "card_title": "Relatorio Coral",
     "description": "Emissao de relatorio no Coral com download CSV e conversao automatica para Excel.",
+    "show_support_buttons": false
+  },
+  "lancamentos_caixa": {
+    "arquivo": "robo_lancamentos_caixa_v1.py",
+    "classe": "RoboLancamentosCaixaApp",
+    "versao": "1.0.1",
+    "constructor_mode": "external_process",
+    "title": "Robo de Lancamentos de Caixa",
+    "geometry": "1180x780",
+    "resizable": true,
+    "card_title": "Caixa",
+    "description": "Lancamentos de cash, despesas e depositos no Protheus com controle por planilha.",
     "show_support_buttons": false
   }
 }
