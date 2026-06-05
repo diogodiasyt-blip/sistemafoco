@@ -7,6 +7,8 @@ import re
 import threading
 import time
 import unicodedata
+from xml.etree import ElementTree
+from zipfile import ZIP_DEFLATED, ZipFile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +16,8 @@ from typing import Dict
 
 import customtkinter as ctk
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from PIL import Image
 from playwright.sync_api import sync_playwright
 from tkinter import filedialog, messagebox
@@ -22,7 +25,6 @@ try:
     import keyring
 except Exception:
     keyring = None
-
 
 APP_TITLE = "Robô de Lançamentos de Caixa"
 APP_GEOMETRY = "1180x760"
@@ -253,6 +255,301 @@ def _load_logo_candidates() -> list[Path]:
     return candidates
 
 
+def _resolve_desktop_dir() -> Path:
+    home = Path.home()
+    candidates: list[Path] = []
+    for env_name in ("OneDriveCommercial", "OneDrive", "OneDriveConsumer"):
+        env_value = os.environ.get(env_name, "").strip()
+        if env_value:
+            base = Path(env_value)
+            candidates.extend([base / "Área de Trabalho", base / "Desktop"])
+    candidates.extend([home / "Área de Trabalho", home / "Desktop"])
+    for one_drive in home.glob("OneDrive*"):
+        candidates.extend([one_drive / "Área de Trabalho", one_drive / "Desktop"])
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return home / "Desktop"
+
+
+def _resolve_rateio_mapping_path(workbook_path: Path) -> Path | None:
+    candidates = [
+        workbook_path.parent / "MAPEAMENTO DESPESAS.xlsx",
+        workbook_path.parent / "MAPEAMENTO RATEIO.xlsx",
+        workbook_path.parent.parent / "RATEIO" / "MAPEAMENTO DESPESAS.xlsx",
+        workbook_path.parent.parent / "RATEIO" / "MAPEAMENTO RATEIO.xlsx",
+        _resolve_desktop_dir() / "MAPEAMENTO DESPESAS.xlsx",
+        _resolve_desktop_dir().parent / "MAPEAMENTO DESPESAS.xlsx",
+        _resolve_desktop_dir().parent / "CAIXA" / "RATEIO" / "MAPEAMENTO DESPESAS.xlsx",
+        _resolve_desktop_dir().parent / "CAIXA" / "RATEIO" / "MAPEAMENTO RATEIO.xlsx",
+        Path.cwd() / "MAPEAMENTO DESPESAS.xlsx",
+        Path.cwd() / "MAPEAMENTO RATEIO.xlsx",
+        Path.cwd() / "DESENVOLVIMENTO" / "assets" / "MAPEAMENTO DESPESAS.xlsx",
+        Path.cwd() / "DESENVOLVIMENTO" / "assets" / "MAPEAMENTO RATEIO.xlsx",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _unique_output_dir(base_dir: Path) -> Path:
+    if not base_dir.exists():
+        return base_dir
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = base_dir.with_name(f"{base_dir.name} {timestamp}")
+    counter = 2
+    while candidate.exists():
+        candidate = base_dir.with_name(f"{base_dir.name} {timestamp} {counter}")
+        counter += 1
+    return candidate
+
+
+def _safe_filename_part(value: str) -> str:
+    text = _normalize_text(value)
+    text = re.sub(r"[^A-Z0-9_-]+", "_", text).strip("_")
+    return text or "LOJA"
+
+
+def _load_rateio_mapping() -> dict[str, str]:
+    return dict(RATEIO_EXPENSE_ACCOUNT_MAP)
+
+
+def _read_material_source(workbook_path: Path, flow_key: str) -> pd.DataFrame:
+    flow = FLOW_SPECS[flow_key]
+    with pd.ExcelFile(workbook_path) as excel:
+        sheet_name = _resolve_sheet_name(excel.sheet_names, flow["sheet_name"])
+    if sheet_name is None:
+        raise RuntimeError(f"A aba {flow['sheet_name']} nao existe na planilha selecionada.")
+    dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=flow.get("header_row", 0))
+    normalized_columns = {_normalize_text(column): column for column in dataframe.columns}
+    rename_map: Dict[str, str] = {}
+    for canonical, aliases in flow["aliases"].items():
+        for alias in aliases:
+            original = normalized_columns.get(_normalize_text(alias))
+            if original is not None:
+                rename_map[original] = canonical
+                break
+    renamed = dataframe.rename(columns=rename_map).copy()
+    missing = [column for column in flow["required_columns"] if column not in renamed.columns]
+    if missing:
+        raise RuntimeError(f"A aba {flow['sheet_name']} esta sem colunas obrigatorias: {', '.join(missing)}")
+    return renamed
+
+
+def _infer_period_from_sources(cash_df: pd.DataFrame, despesas_df: pd.DataFrame) -> str:
+    dates: list[datetime] = []
+    for dataframe, column in ((cash_df, "DATA PAGAMENTO"), (despesas_df, "DATA DE DESPESA")):
+        if column not in dataframe.columns:
+            continue
+        for value in dataframe[column].tolist():
+            parsed = _parse_date(value)
+            if parsed is not None:
+                dates.append(parsed)
+    if not dates:
+        return ""
+    return _format_period_text(min(dates), max(dates))
+
+
+def _build_material_rows(cash_df: pd.DataFrame, despesas_df: pd.DataFrame, period_text: str) -> tuple[list[list], list[list]]:
+    cash_rows: list[list] = []
+    cash_df = cash_df.copy()
+    cash_df["LOJA_NORMALIZADA"] = cash_df["LOJA"].map(_normalize_text)
+    cash_df["VALOR_NUMERICO"] = pd.to_numeric(cash_df["VALOR"], errors="coerce").fillna(0)
+    for loja, group_df in cash_df.groupby("LOJA_NORMALIZADA", dropna=True):
+        if not loja:
+            continue
+        valor_total = float(group_df["VALOR_NUMERICO"].sum())
+        if valor_total:
+            cash_rows.append([loja, f"RECEITA ({period_text}) - {loja}", round(valor_total, 2)])
+
+    despesa_rows: list[list] = []
+    despesas_df = despesas_df.copy()
+    despesas_df["LOJA_NORMALIZADA"] = despesas_df["LOJA"].map(_normalize_text)
+    despesas_df["VALOR_NUMERICO"] = pd.to_numeric(despesas_df["VALOR"], errors="coerce").fillna(0)
+    for loja, group_df in despesas_df.groupby("LOJA_NORMALIZADA", dropna=True):
+        if not loja:
+            continue
+        valor_total = float(group_df["VALOR_NUMERICO"].sum())
+        if valor_total:
+            despesa_rows.append([loja, f"DESPESA ({period_text}) - {loja}", round(valor_total, 2)])
+
+    return sorted(cash_rows, key=lambda row: row[0]), sorted(despesa_rows, key=lambda row: row[0])
+
+
+def _style_simple_sheet(sheet) -> None:
+    header_fill = PatternFill("solid", fgColor="FFB6E600")
+    header_font = Font(bold=True, color="FF000000")
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+    for column, width in {"A": 18, "B": 46, "C": 16}.items():
+        sheet.column_dimensions[column].width = width
+    for cell in sheet["C"][1:]:
+        cell.number_format = '_-"R$"\\ * #,##0.00_-;\\-"R$"\\ * #,##0.00_-;_-"R$"\\ * "-"??_-;_-@_-'
+
+
+def _save_material_principal(output_dir: Path, cash_rows: list[list], despesa_rows: list[list]) -> Path:
+    workbook = Workbook()
+    cash_sheet = workbook.active
+    cash_sheet.title = "Cash"
+    cash_sheet.append(["Loja", "Histórico", "Valor"])
+    for row in cash_rows:
+        cash_sheet.append(row)
+    _style_simple_sheet(cash_sheet)
+
+    desp_sheet = workbook.create_sheet("Despesas")
+    desp_sheet.append(["Loja", "Histórico", "Valor"])
+    for row in despesa_rows:
+        desp_sheet.append(row)
+    _style_simple_sheet(desp_sheet)
+
+    output_path = output_dir / MATERIAL_MAIN_FILENAME
+    workbook.save(output_path)
+    return output_path
+
+
+def _build_rateio_rows(
+    despesas_df: pd.DataFrame,
+    mapping: dict[str, str],
+) -> tuple[dict[str, list[list]], list[str]]:
+    dataframe = despesas_df.copy()
+    dataframe["LOJA_NORMALIZADA"] = dataframe["LOJA"].map(_normalize_text)
+    dataframe["TIPO_RATEIO"] = dataframe["TIPO DA DESPESA"].fillna("").astype(str).str.strip()
+    dataframe["VALOR_NUMERICO"] = pd.to_numeric(dataframe["VALOR"], errors="coerce").fillna(0)
+
+    rows_by_store: dict[str, list[list]] = {}
+    unmapped: set[str] = set()
+    grouped = dataframe.groupby(["LOJA_NORMALIZADA", "TIPO_RATEIO"], dropna=True)
+    for (loja, tipo), group_df in grouped:
+        if not loja or not tipo:
+            continue
+        valor_total = float(group_df["VALOR_NUMERICO"].sum())
+        if not valor_total:
+            continue
+        account = mapping.get(_normalize_text(tipo))
+        if account is None:
+            unmapped.add(tipo)
+        rows_by_store.setdefault(loja, []).append([str(account) if account else None, None, None, round(valor_total, 2), tipo, loja, None, None, None])
+
+    for rows in rows_by_store.values():
+        rows.sort(key=lambda row: (row[4], row[0]))
+    return rows_by_store, sorted(unmapped)
+
+
+def _style_rateio_sheet(sheet, total_rows: int) -> None:
+    header_fill = PatternFill("solid", fgColor="FFB6E600")
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = Font(bold=True, color="FF000000")
+        cell.alignment = Alignment(horizontal="center")
+    widths = {"A": 19.85, "B": 20.28, "C": 16.71, "D": 14.42, "E": 38, "F": 20.85, "G": 26.71, "H": 11.71, "I": 16.28, "K": 14.28}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    currency_format = '_-"R$"\\ * #,##0.00_-;\\-"R$"\\ * #,##0.00_-;_-"R$"\\ * "-"??_-;_-@_-'
+    for row in range(2, total_rows + 2):
+        sheet.cell(row=row, column=1).number_format = "@"
+        sheet.cell(row=row, column=1).alignment = Alignment(horizontal="center")
+        sheet.cell(row=row, column=3).number_format = "0.00"
+        sheet.cell(row=row, column=4).number_format = currency_format
+        sheet.cell(row=row, column=5).alignment = Alignment(horizontal="center")
+        sheet.cell(row=row, column=6).alignment = Alignment(horizontal="center")
+    sheet["K2"].number_format = "0.00"
+
+
+def _cache_rateio_formula_values(
+    workbook_path: Path,
+    percentages: list[float],
+    total_value: float,
+) -> None:
+    namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ElementTree.register_namespace("", namespace)
+    temporary_path = workbook_path.with_suffix(".tmp.xlsx")
+
+    with ZipFile(workbook_path, "r") as source, ZipFile(temporary_path, "w", ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                root = ElementTree.fromstring(content)
+                cached_values = {
+                    **{f"C{index}": value for index, value in enumerate(percentages, start=2)},
+                    "K2": total_value,
+                }
+                for cell in root.findall(f".//{{{namespace}}}c"):
+                    coordinate = cell.attrib.get("r")
+                    if coordinate not in cached_values:
+                        continue
+                    value = cell.find(f"{{{namespace}}}v")
+                    if value is None:
+                        value = ElementTree.SubElement(cell, f"{{{namespace}}}v")
+                    value.text = format(cached_values[coordinate], ".15g")
+                content = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+            target.writestr(item, content)
+
+    temporary_path.replace(workbook_path)
+
+
+def _save_rateio_workbooks(output_dir: Path, rows_by_store: dict[str, list[list]]) -> list[Path]:
+    rateio_files: list[Path] = []
+    for loja, rows in sorted(rows_by_store.items()):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Plan1"
+        sheet.append(RATEIO_HEADERS)
+        total_value = round(sum(float(row[3] or 0) for row in rows), 2)
+        percentages = [
+            round(float(row[3] or 0) / total_value * 100, 2) if total_value else 0.0
+            for row in rows
+        ]
+        if total_value and percentages:
+            percentages[-1] = round(100.0 - sum(percentages[:-1]), 2)
+        for index, row in enumerate(rows, start=2):
+            row[2] = f"=D{index}/$K$2*100"
+            sheet.append(row)
+            sheet.cell(row=index, column=1).value = str(row[0]) if row[0] else None
+            sheet.cell(row=index, column=1).number_format = "@"
+        _style_rateio_sheet(sheet, len(rows))
+        sheet["K2"] = "=SUM(D:D)"
+        output_path = output_dir / f"{_safe_filename_part(loja)} - RATEIO.xlsx"
+        workbook.save(output_path)
+        _cache_rateio_formula_values(output_path, percentages, total_value)
+        rateio_files.append(output_path)
+    return rateio_files
+
+
+def gerar_material_apoio_caixa(
+    workbook_path: str | Path,
+    output_dir: str | Path,
+    period_text: str = "",
+    mapping_path: str | Path | None = None,
+) -> MaterialApoioResult:
+    workbook_path = Path(workbook_path)
+    output_dir = Path(output_dir)
+    if not workbook_path.exists():
+        raise RuntimeError(f"Planilha nao encontrada: {workbook_path}")
+
+    cash_df = _read_material_source(workbook_path, "cash")
+    despesas_df = _read_material_source(workbook_path, "despesas")
+    period = _normalize_text(period_text) if period_text else _infer_period_from_sources(cash_df, despesas_df)
+    if not period:
+        raise RuntimeError("Nao foi possivel identificar o periodo. Informe o periodo do historico.")
+
+    mapping = _load_rateio_mapping()
+    cash_rows, despesa_rows = _build_material_rows(cash_df, despesas_df, period)
+    rows_by_store, unmapped_types = _build_rateio_rows(despesas_df, mapping)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    main_workbook = _save_material_principal(output_dir, cash_rows, despesa_rows)
+    rateio_files = _save_rateio_workbooks(output_dir, rows_by_store)
+    return MaterialApoioResult(
+        output_dir=output_dir,
+        main_workbook=main_workbook,
+        rateio_files=rateio_files,
+        unmapped_types=unmapped_types,
+    )
+
+
 @dataclass
 class ValidationResult:
     flow_key: str
@@ -289,6 +586,14 @@ class ExpenseGroup:
     @property
     def precisa_rateio(self) -> bool:
         return len(self.tipos_despesa) > 1
+
+
+@dataclass
+class MaterialApoioResult:
+    output_dir: Path
+    main_workbook: Path
+    rateio_files: list[Path]
+    unmapped_types: list[str]
 
 
 CASH_FIELD_LABELS = {
@@ -343,17 +648,48 @@ EXPENSE_ACCOUNT_MAP = {
     "ESTACIONAMENTO": "4101010016",
     "DESPESAS COM ESCRITORIOS": "4101010022",
     "DESPESAS DE ESCRITORIO": "4101010022",
+    "MATERIAL DE EXPEDIENTE": "4101010022",
     "EVENTOS E CONFRATERNIZACOES": "4101010025",
     "MANUTENCAO DE EQUIPAMENTO": "4101010051",
-    "MATERIAL E SERVICOS DE LIMPEZA": "4101010056",
+    "MATERIAL E SERVICO DE LIMPEZA": "4101010056",
     "OUTROS GASTOS COM FROTA": "4101010061",
     "CORREIOS E MALOTES": "4101010050",
     "CORREIO E MALOTE": "4101010050",
     "VIAGENS AEREO HOSPEDAGEM ALIMENTACAO": "4101010024",
     "SERVICOS DE TERCEIROS": "4101010027",
 }
+RATEIO_EXPENSE_ACCOUNT_MAP = {
+    "AGUA E ESGOTO": "4101010022",
+    "ANIVERSARIANTE DO MES": "4101010025",
+    "COMBUSTIVEL": "4101010004",
+    "COMBUSTIVEL TRANSFER": "4101010004",
+    "CORREIO E MALOTE": "4101010050",
+    "ESTACIONAMENTO": "4101010016",
+    "EVENTOS": "4101010025",
+    "MANUTENCAO DE EQUIPAMENTO": "4101010051",
+    "MATERIAL DE CONSUMO": "4101010022",
+    "MATERIAL DE EXPEDIENTE": "4101010022",
+    "MATERIAL E SERVICO DE LIMPEZA": "4101010056",
+    "REEMBOLSO - DEDUCAO CLIENTES": "3102020003",
+    "TELEFONIA E INTERNET": "4101010022",
+    "VT - VALE TRANSPORTE": "4101010022",
+    "OUTROS": "4101010022",
+}
 DEFAULT_EXPENSE_ACCOUNT = "4101010022"
 DEFAULT_EXPENSE_ACCOUNT_DESCRIPTION = "DESPESAS COM ESCRITORIOS"
+MATERIAL_MAIN_FILENAME = "Material para lan\u00e7amento.xlsx"
+MATERIAL_OUTPUT_FOLDER_NAME = "Material de Apoio Caixa"
+RATEIO_HEADERS = [
+    "Conta Contábil Debito",
+    "Conta Contábil Credito",
+    "Percentual Ratear",
+    "Valor Ratear",
+    "Histórico Rateio",
+    "Centro de Custo Debito",
+    "Centro de Custo Credito",
+    "Item Contábil Débito",
+    "Item Contábil Crédito",
+]
 
 HELP_FIELD_PATTERNS = {
     "tipo": ("E1_TIPO", "TIPO PROBLEMA", "TIPO DO TITULO"),
@@ -403,7 +739,7 @@ class TotvsCaixaLoginBot:
         )
 
         frame = self.page.frame_locator("iframe")
-        user_field = frame.get_by_role("textbox", name=re.compile("Insira seu usu.rio", re.I))
+        user_field = frame.get_by_role("textbox", name=re.compile("Insira seu usuário", re.I))
         password_field = frame.get_by_role("textbox", name=re.compile("Insira sua senha", re.I))
 
         self.log("Preenchendo credenciais...")
@@ -1991,17 +2327,19 @@ class RoboLancamentosCaixaApp(ctk.CTk):
 
         actions = ctk.CTkFrame(content, fg_color="transparent")
         actions.grid(row=2, column=0, sticky="ew", padx=18)
-        for idx in range(4):
+        for idx in range(5):
             actions.grid_columnconfigure(idx, weight=1)
 
         self.validate_button = self._primary_button(actions, "Validar planilha", self.validate_workbook)
         self.validate_button.grid(row=0, column=0, padx=(0, 8), sticky="ew")
+        self.material_button = self._primary_button(actions, "Gerar material de apoio", self.generate_support_material)
+        self.material_button.grid(row=0, column=1, padx=8, sticky="ew")
         self.start_button = self._primary_button(actions, "Iniciar", self.start_processing)
-        self.start_button.grid(row=0, column=1, padx=8, sticky="ew")
+        self.start_button.grid(row=0, column=2, padx=8, sticky="ew")
         self.pause_button = self._secondary_button(actions, "Pausar", self.pause_processing)
-        self.pause_button.grid(row=0, column=2, padx=8, sticky="ew")
+        self.pause_button.grid(row=0, column=3, padx=8, sticky="ew")
         self.stop_button = self._secondary_button(actions, "Parar", self.stop_processing)
-        self.stop_button.grid(row=0, column=3, padx=(8, 0), sticky="ew")
+        self.stop_button.grid(row=0, column=4, padx=(8, 0), sticky="ew")
 
     def _create_section(self, parent, row: int, title: str) -> ctk.CTkFrame:
         section = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=24, border_width=1, border_color=CARD_BORDER)
@@ -2411,6 +2749,53 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         finally:
             self._update_action_buttons()
 
+    def generate_support_material(self) -> None:
+        path_text = self.file_path_var.get().strip()
+        if not path_text:
+            messagebox.showwarning("Planilha", "Selecione a planilha antes de gerar o material de apoio.")
+            return
+
+        workbook_path = Path(path_text)
+        if not workbook_path.exists():
+            messagebox.showerror("Arquivo nao encontrado", f"A planilha nao foi encontrada:\n{workbook_path}")
+            return
+
+        base_output_dir = _resolve_desktop_dir() / MATERIAL_OUTPUT_FOLDER_NAME
+        output_dir = _unique_output_dir(base_output_dir)
+        self.status_var.set("Gerando material de apoio...")
+        self.progress.set(0.15)
+        self.log("Gerando planilha principal e rateios por loja.")
+
+        try:
+            result = gerar_material_apoio_caixa(
+                workbook_path=workbook_path,
+                output_dir=output_dir,
+                period_text=self.period_var.get().strip(),
+            )
+            self.progress.set(1)
+            self.status_var.set(f"Material gerado em: {result.output_dir}")
+            self.log(f"Planilha principal criada: {result.main_workbook}")
+            self.log(f"Rateios criados: {len(result.rateio_files)} arquivo(s).")
+            if result.unmapped_types:
+                self.log(
+                    "Tipos sem mapeamento direto deixados com conta em branco para revisao: "
+                    + ", ".join(result.unmapped_types[:20])
+                    + ("..." if len(result.unmapped_types) > 20 else "")
+                )
+            messagebox.showinfo(
+                "Material de apoio gerado",
+                f"Arquivos criados em:\n{result.output_dir}\n\n"
+                f"Planilha principal: {result.main_workbook.name}\n"
+                f"Rateios: {len(result.rateio_files)} arquivo(s)",
+            )
+        except Exception as exc:
+            self.progress.set(0)
+            self.status_var.set("Falha ao gerar material de apoio")
+            self.log(f"Erro ao gerar material de apoio: {exc}")
+            messagebox.showerror("Falha ao gerar material de apoio", str(exc))
+        finally:
+            self._update_action_buttons()
+
     def _normalize_flow_dataframe(self, dataframe: pd.DataFrame, flow: Dict) -> tuple[pd.DataFrame, list[str]]:
         rename_map: Dict[str, str] = {}
         normalized_columns = {_normalize_text(column): column for column in dataframe.columns}
@@ -2779,6 +3164,9 @@ class RoboLancamentosCaixaApp(ctk.CTk):
     def _update_action_buttons(self) -> None:
         running = self.processing_thread is not None and self.processing_thread.is_alive()
         validated = self.validation_result is not None and not self.validation_result.missing_columns
+        has_workbook = bool(self.file_path_var.get().strip())
+        if hasattr(self, "material_button"):
+            self.material_button.configure(state="normal" if has_workbook and not running else "disabled")
         self.start_button.configure(state="normal" if validated and not running else "disabled")
         self.pause_button.configure(state="disabled")
         self.stop_button.configure(state="normal" if running else "disabled")
