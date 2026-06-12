@@ -180,6 +180,7 @@ class RoboCobrancaMensalApp:
         self.report_columns = []
         self.whatsapp_report_input_path = ""
         self.whatsapp_report_output_path = None
+        self.whatsapp_base_output_path = None
         self.whatsapp_report_rows = []
         self.whatsapp_report_columns = []
 
@@ -298,6 +299,7 @@ class RoboCobrancaMensalApp:
     def atualizar_relatorio(self, dados):
         self.report_rows.append(dados)
         self.salvar_relatorio()
+        self.atualizar_base_whatsapp_da_cobranca()
         self.adicionar_log(f"Relatório atualizado (Contrato {dados.get('Contrato', '')})")
 
     def salvar_relatorio(self):
@@ -308,6 +310,58 @@ class RoboCobrancaMensalApp:
         for linha in self.report_rows:
             ws.append([linha.get(coluna, "") for coluna in self.report_columns])
         wb.save(self.report_path)
+
+    def obter_caminho_base_whatsapp_da_cobranca(self):
+        if self.whatsapp_base_output_path:
+            return self.whatsapp_base_output_path
+        if self.report_path:
+            pasta = os.path.dirname(self.report_path) or os.getcwd()
+            nome_base = os.path.splitext(os.path.basename(self.report_path))[0]
+            if nome_base.startswith("Relatorio_Cobranca_"):
+                nome_base = nome_base.replace("Relatorio_Cobranca_", "", 1)
+            self.whatsapp_base_output_path = os.path.join(pasta, f"Base_WhatsApp_{nome_base}.xlsx")
+        else:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            self.whatsapp_base_output_path = os.path.join(os.getcwd(), f"Base_WhatsApp_{timestamp}.xlsx")
+        return self.whatsapp_base_output_path
+
+    def linha_apta_para_base_whatsapp(self, linha):
+        return bool(linha.get("Contrato")) and bool(linha.get("Link")) and bool(
+            self.normalizar_telefone_whatsapp(linha.get("Telefone"))
+        )
+
+    def atualizar_base_whatsapp_da_cobranca(self):
+        if not self.report_rows:
+            return None
+
+        caminho = self.obter_caminho_base_whatsapp_da_cobranca()
+        colunas = [
+            "Contrato", "Nome", "Telefone", "Valor a Cobrar", "Descricao Cobranca",
+            "Link", "Email Cliente", "Status Email", "Status Final", "Data/Hora", "Erro"
+        ]
+        linhas_aptas = [linha for linha in self.report_rows if self.linha_apta_para_base_whatsapp(linha)]
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Base WhatsApp"
+        ws.append(colunas)
+        for linha in linhas_aptas:
+            ws.append([linha.get(coluna, "") for coluna in colunas])
+        wb.save(caminho)
+
+        self.whatsapp_report_input_path = caminho
+        try:
+            self.whatsapp_df_base, self.whatsapp_df_aptos = self.carregar_relatorio_whatsapp(caminho)
+            self.whatsapp_total_aptos = len(self.whatsapp_df_aptos)
+            if hasattr(self, "label_relatorio_whatsapp"):
+                self.atualizar_interface_whatsapp()
+            self.adicionar_log_whatsapp(
+                f"Base para WhatsApp atualizada: {os.path.basename(caminho)} | "
+                f"Aptos: {self.whatsapp_total_aptos}"
+            )
+        except Exception as exc:
+            self.adicionar_log_whatsapp(f"Nao foi possivel atualizar a base do WhatsApp: {exc}")
+        return caminho
 
     def criar_relatorio_whatsapp(self):
         timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -2118,8 +2172,15 @@ Checkout - Foco Aluguel de Carros"""
         self.adicionar_log(f"Preparando envio de e-mail para: {destinatario}")
         outlook = win32.Dispatch("Outlook.Application")
         mail = outlook.CreateItem(0)
-        conta_envio = self.obter_conta_outlook(outlook, self.EMAIL_REMETENTE_CORPORATIVO)
-        self.forcar_conta_envio_outlook(mail, conta_envio)
+        try:
+            conta_envio = self.obter_conta_outlook(outlook, self.EMAIL_REMETENTE_CORPORATIVO)
+            self.forcar_conta_envio_outlook(mail, conta_envio)
+        except Exception as erro_conta:
+            self.adicionar_log(
+                f"Conta {self.EMAIL_REMETENTE_CORPORATIVO} nao encontrada como conta direta no Outlook. "
+                f"Tentando enviar em nome dela. Detalhe: {erro_conta}"
+            )
+            mail.SentOnBehalfOfName = self.EMAIL_REMETENTE_CORPORATIVO
         mail.To = destinatario
         mail.Subject = assunto
         mail.Body = corpo
