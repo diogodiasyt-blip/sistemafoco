@@ -66,6 +66,20 @@
     "show_model_button": false,
     "content_y_offset": 12
   },
+  "cobranca_pedagios": {
+    "arquivo": "robo_cobranca_pedagios_v1.py",
+    "classe": "RoboCobrancaPedagiosApp",
+    "versao": "1.0.0",
+    "constructor_mode": "external_process",
+    "title": "Robo de Cobranca de Pedagios",
+    "geometry": "1180x780",
+    "resizable": true,
+    "card_title": "Pedagios",
+    "description": "Regua de cobranca de pedagios por e-mail, link e tentativa de cartao no Coral.",
+    "tutorial_file": "tutorial_cobranca_pedagios.txt",
+    "show_support_buttons": true,
+    "show_model_button": false
+  },
   "relatorio_coral": {
     "arquivo": "robo_relatorio_coral_v1.py",
     "classe": "RoboRelatorioCoralApp",
