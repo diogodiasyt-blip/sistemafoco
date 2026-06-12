@@ -98,7 +98,7 @@ ACTION_LABELS = {
 }
 ACTION_OPTIONS = [ACTION_LABELS[key] for key in ACTION_KEYS]
 ACTION_RULES = {
-    ACTION_UPDATE_QUEUE: "Atualiza os indicadores lendo a base operacional sincronizada no SharePoint/OneDrive.",
+    ACTION_UPDATE_QUEUE: "Atualiza os indicadores lendo a base operacional.",
     ACTION_PROCESS_D0: "Etapa 1: envia o aviso inicial com link de pagamento. A proxima etapa fica apta apos 4 dias.",
     ACTION_PROCESS_D2: "Etapa 2: tenta os cartoes dos contratos; se sobrar saldo, envia link residual. A proxima etapa fica apta apos 4 dias.",
     ACTION_PROCESS_D45: "Etapa 3: repete tentativa de cartao e link residual com e-mail em tom mais firme.",
@@ -1908,7 +1908,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         self.file_path_entry.pack(anchor="w", fill="x", pady=(4, 0))
         ctk.CTkLabel(
             wrapper,
-            text="Selecione uma base operacional .xlsx local ou sincronizada. Links continuam aceitos como fallback.",
+            text="Selecione uma base .xlsx",
             text_color=TITLE_TEXT,
             font=("Segoe UI", 12),
             wraplength=760,
