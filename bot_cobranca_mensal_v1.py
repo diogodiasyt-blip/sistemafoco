@@ -79,6 +79,10 @@ class BarraProgressoAdapter:
 class RoboCobrancaMensalApp:
     CREDENTIAL_SERVICE = "SistemaFOCO"
     CREDENTIAL_MODULE_KEY = "cobranca_coral"
+    OUTLOOK_FOLDER_OUTBOX = 4
+    OUTLOOK_FOLDER_SENT = 5
+    OUTLOOK_SEND_CONFIRM_TIMEOUT_SECONDS = 30
+    OUTLOOK_SEND_CONFIRM_POLL_SECONDS = 2
     MAIN_BG = "#f6f4f1"
     CARD_BG = "#ffffff"
     CARD_BORDER = "#eadfdb"
@@ -159,10 +163,12 @@ class RoboCobrancaMensalApp:
 
     # DADOS DO CLIENTE / LINK
     XPATH_INPUT_EMAIL_CLIENTE = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[1]/div[2]/foco-rent-agreement-customer-form/div/div[2]/div[6]/div/div[1]/foco-form-input/div/div[1]/input"
+    CSS_INPUT_EMAIL_CLIENTE = "input#email"
     XPATH_BOTAO_LINK = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[1]/div[1]/button[5]"
     XPATH_CAMPO_VALOR_LINK = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[8]/div/div[2]/foco-form-input/div/div[1]/input"
     XPATH_MODALIDADE_A_VENCER = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[8]/div/div[3]/foco-form-button-group/div/div/label[1]"
     XPATH_BOTAO_EFETUAR_PAGAMENTO_LINK = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[15]/button"
+    XPATH_INPUT_LINK_GERADO = "/html/body/ngb-modal-window/div/div/foco-pbl-modal/div[2]/div/div[1]/div/input"
     XPATH_BOTAO_COPIAR_LINK = "/html/body/ngb-modal-window/div/div/foco-pbl-modal/div[2]/div/div[1]/div/button"
 
     def __init__(self, root):
@@ -1519,9 +1525,16 @@ class RoboCobrancaMensalApp:
             "Status do contrato",
             timeout=self.TIMEOUT_PADRAO
         ).strip().lower()
-        if status != self.STATUS_AGUARDANDO_DEVOLUCAO:
+        if self.normalizar_texto(status) != self.normalizar_texto(self.STATUS_AGUARDANDO_DEVOLUCAO):
             raise Exception(f"Status do contrato diferente de '{self.STATUS_AGUARDANDO_DEVOLUCAO}': {status}")
         self.adicionar_log("Status validado: Aguardando devolução.")
+        return True
+
+    def validar_status_aguardando_devolucao_contrato(self, numero_contrato):
+        self.adicionar_log("Validando status do contrato pela tela Contratos antes da cobranca.")
+        self.ir_para_contratos()
+        self.buscar_contrato_seguro(numero_contrato, tentativas=self.MAX_TENTATIVAS_BUSCA)
+        self.validar_status_aguardando_devolucao()
         return True
 
     def validar_tela_edicao(self, timeout=None):
@@ -1529,6 +1542,24 @@ class RoboCobrancaMensalApp:
             timeout = self.TIMEOUT_PADRAO
         self.esperar_elemento(By.XPATH, self.XPATH_ABA_PAGAMENTOS_RAPIDA_ICONE, timeout=timeout)
         self.adicionar_log("Tela de edição validada com sucesso.")
+        return True
+
+    def montar_url_edicao_contrato(self, numero_contrato):
+        numero_contrato = str(numero_contrato or "").strip()
+        if not numero_contrato:
+            raise Exception("Contrato vazio para abrir edicao direta.")
+        return f"{self.URL_CONTRATOS}/editar/{numero_contrato}"
+
+    def abrir_edicao_contrato_direta(self, numero_contrato):
+        self.verificar_controle_execucao()
+        if not self.esta_logado():
+            self.recuperar_sessao()
+        url = self.montar_url_edicao_contrato(numero_contrato)
+        self.adicionar_log(f"Abrindo edicao direta do contrato {numero_contrato}: {url}")
+        self.driver.get(url)
+        if self.clicar_popup_sim_se_aparecer(timeout=self.TIMEOUT_POPUP):
+            self.adicionar_log("Popup tratado apos abrir edicao direta.")
+        self.validar_tela_edicao(timeout=self.TIMEOUT_PADRAO)
         return True
 
     def abrir_edicao_contrato(self):
@@ -1992,8 +2023,25 @@ class RoboCobrancaMensalApp:
 
     def capturar_email_cliente(self):
         self.adicionar_log("Capturando e-mail do cliente...")
-        email = self.obter_valor_input(By.XPATH, self.XPATH_INPUT_EMAIL_CLIENTE, "E-mail do cliente", timeout=self.TIMEOUT_PADRAO)
+        try:
+            self.esperar_visivel(By.CSS_SELECTOR, self.CSS_INPUT_EMAIL_CLIENTE, timeout=self.TIMEOUT_CURTO)
+            email = self.obter_valor_input(By.CSS_SELECTOR, self.CSS_INPUT_EMAIL_CLIENTE, "E-mail do cliente", timeout=self.TIMEOUT_CURTO)
+        except Exception:
+            email = self.obter_valor_input(By.XPATH, self.XPATH_INPUT_EMAIL_CLIENTE, "E-mail do cliente", timeout=self.TIMEOUT_PADRAO)
+        email = (email or "").strip()
+        if email:
+            self.adicionar_log(f"E-mail do cliente coletado: {email}")
+        else:
+            self.adicionar_log("Campo de e-mail do cliente localizado, mas sem valor preenchido.")
         return email
+
+    def coletar_email_cliente_na_edicao(self):
+        try:
+            return self.capturar_email_cliente()
+        except Exception as erro_css:
+            self.adicionar_log(f"Coleta direta do e-mail falhou. Tentando aba Dados do cliente: {erro_css}")
+        self.ir_para_dados_cliente()
+        return self.capturar_email_cliente()
 
     def voltar_para_pagamentos_pela_aba(self):
         self.adicionar_log("Voltando para a aba Pagamentos...")
@@ -2022,6 +2070,22 @@ class RoboCobrancaMensalApp:
         self.clicar_seguro(By.XPATH, self.XPATH_BOTAO_EFETUAR_PAGAMENTO_LINK, "Efetuar pagamento link", timeout=self.TIMEOUT_PADRAO)
 
     def copiar_link_gerado(self, tentativas=3):
+        try:
+            self.adicionar_log("Tentando ler link diretamente no modal...")
+            link_modal = self.obter_valor_input(
+                By.XPATH,
+                self.XPATH_INPUT_LINK_GERADO,
+                "link gerado no modal",
+                timeout=self.TIMEOUT_PADRAO,
+            )
+            link_modal = (link_modal or "").strip()
+            if link_modal.lower().startswith("http"):
+                self.adicionar_log(f"Link valido lido diretamente no modal: {link_modal}")
+                return link_modal
+            self.adicionar_log("Campo do link no modal localizado, mas sem link valido.")
+        except Exception as erro:
+            self.adicionar_log(f"Nao foi possivel ler o link direto no modal: {erro}")
+
         for tentativa in range(1, tentativas + 1):
             self.adicionar_log(f"Tentando copiar link... {tentativa}/{tentativas}")
             antes = self.tentar_ler_clipboard()
@@ -2048,10 +2112,14 @@ class RoboCobrancaMensalApp:
         self.adicionar_log(f"Link de pagamento gerado com sucesso. Total de links gerados: {self.links_gerados}")
         return link
 
-    def executar_fluxo_link(self, valor_pagamento):
-        self.ir_para_dados_cliente()
-        email = self.capturar_email_cliente()
-        self.voltar_para_pagamentos_pela_aba()
+    def executar_fluxo_link(self, valor_pagamento, email_cliente=None):
+        email = (email_cliente or "").strip()
+        if email:
+            self.adicionar_log("Usando e-mail jÃ¡ coletado na abertura da ediÃ§Ã£o.")
+        else:
+            self.ir_para_dados_cliente()
+            email = self.capturar_email_cliente()
+            self.voltar_para_pagamentos_pela_aba()
         link = self.gerar_link_de_pagamento(valor_pagamento)
         return {
             "email": email,
@@ -2157,6 +2225,110 @@ Checkout - Foco Aluguel de Carros"""
         campo.send_keys(Keys.ENTER)
         time.sleep(2)
 
+    def iterar_itens_outlook(self, items):
+        try:
+            count = int(items.Count)
+            for index in range(1, count + 1):
+                yield items.Item(index)
+            return
+        except Exception:
+            pass
+        try:
+            for item in items:
+                yield item
+        except Exception:
+            return
+
+    def item_outlook_contem_email(self, item, email):
+        email_norm = str(email or "").strip().casefold()
+        if not email_norm:
+            return False
+        for attr in ("To", "CC", "BCC"):
+            try:
+                texto = str(getattr(item, attr, "") or "").casefold()
+            except Exception:
+                texto = ""
+            if email_norm in texto:
+                return True
+
+        try:
+            recipients = getattr(item, "Recipients", None)
+            if recipients is None:
+                return False
+            for recipient in self.iterar_itens_outlook(recipients):
+                address = str(getattr(recipient, "Address", "") or "").casefold()
+                name = str(getattr(recipient, "Name", "") or "").casefold()
+                if email_norm in {address, name} or email_norm in address:
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def item_outlook_corresponde_email(self, item, assunto, destinatario, cc=None):
+        try:
+            item_subject = str(getattr(item, "Subject", "") or "").strip()
+        except Exception:
+            item_subject = ""
+        if item_subject != str(assunto or "").strip():
+            return False
+
+        if not self.item_outlook_contem_email(item, destinatario):
+            return False
+        if cc and not self.item_outlook_contem_email(item, cc):
+            return False
+        return True
+
+    def pasta_outlook_tem_email(self, namespace, folder_id, assunto, destinatario, cc=None):
+        folder = namespace.GetDefaultFolder(folder_id)
+        items = getattr(folder, "Items", [])
+        for item in self.iterar_itens_outlook(items):
+            if self.item_outlook_corresponde_email(item, assunto, destinatario, cc=cc):
+                return True
+        return False
+
+    def caixa_saida_tem_email(self, namespace, assunto, destinatario, cc=None):
+        return self.pasta_outlook_tem_email(namespace, self.OUTLOOK_FOLDER_OUTBOX, assunto, destinatario, cc=cc)
+
+    def itens_enviados_tem_email(self, namespace, assunto, destinatario, cc=None):
+        return self.pasta_outlook_tem_email(namespace, self.OUTLOOK_FOLDER_SENT, assunto, destinatario, cc=cc)
+
+    def aguardar_saida_caixa_outlook(self, namespace, assunto, destinatario, cc=None):
+        try:
+            namespace.SendAndReceive(False)
+        except Exception as erro:
+            self.adicionar_log(f"Outlook: nao foi possivel forcar Enviar/Receber: {erro}")
+
+        limite = time.time() + max(int(self.OUTLOOK_SEND_CONFIRM_TIMEOUT_SECONDS), 1)
+        intervalo = max(int(self.OUTLOOK_SEND_CONFIRM_POLL_SECONDS), 1)
+        saiu_da_caixa = False
+        while time.time() < limite:
+            if self.caixa_saida_tem_email(namespace, assunto, destinatario, cc=cc):
+                time.sleep(intervalo)
+            else:
+                if not saiu_da_caixa:
+                    self.adicionar_log("Outlook: mensagem saiu da Caixa de Saida.")
+                    saiu_da_caixa = True
+                if self.itens_enviados_tem_email(namespace, assunto, destinatario, cc=cc):
+                    self.adicionar_log("Outlook: mensagem localizada em Itens Enviados.")
+                    return "confirmado_em_itens_enviados"
+                time.sleep(intervalo)
+                self.adicionar_log("Outlook: aguardando mensagem aparecer em Itens Enviados...")
+            try:
+                namespace.SendAndReceive(False)
+            except Exception:
+                pass
+
+        if saiu_da_caixa:
+            self.adicionar_log(
+                "Outlook: a mensagem saiu da Caixa de Saida, mas nao apareceu em Itens Enviados da pasta monitorada."
+            )
+            return "despachado_sem_confirmacao_enviados"
+
+        raise Exception(
+            "Outlook manteve o e-mail na Caixa de Saida/Na fila. "
+            "Verifique se o Outlook esta online, se a conta de envio esta conectada e execute Enviar/Receber."
+        )
+
     def enviar_email_outlook(self, destinatario, assunto, corpo, cc=None, bcc=None):
         destinatario = (destinatario or "").strip()
         assunto = (assunto or "").strip()
@@ -2169,29 +2341,50 @@ Checkout - Foco Aluguel de Carros"""
             cc = cc.strip()
             if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cc):
                 raise Exception(f"E-mail em cópia inválido: {cc}")
+        def log_etapa(mensagem, inicio):
+            agora = time.perf_counter()
+            self.adicionar_log(f"Outlook: {mensagem} ({agora - inicio:.1f}s)")
+            return agora
+
         self.adicionar_log(f"Preparando envio de e-mail para: {destinatario}")
-        outlook = win32.Dispatch("Outlook.Application")
-        mail = outlook.CreateItem(0)
+        etapa = time.perf_counter()
+        pythoncom.CoInitialize()
         try:
-            conta_envio = self.obter_conta_outlook(outlook, self.EMAIL_REMETENTE_CORPORATIVO)
-            self.forcar_conta_envio_outlook(mail, conta_envio)
-        except Exception as erro_conta:
-            self.adicionar_log(
-                f"Conta {self.EMAIL_REMETENTE_CORPORATIVO} nao encontrada como conta direta no Outlook. "
-                f"Tentando enviar em nome dela. Detalhe: {erro_conta}"
-            )
-            mail.SentOnBehalfOfName = self.EMAIL_REMETENTE_CORPORATIVO
-        mail.To = destinatario
-        mail.Subject = assunto
-        mail.Body = corpo
-        if cc:
-            mail.CC = cc
-        if bcc:
-            mail.BCC = bcc
-        mail.Save()
-        mail.Send()
-        self.adicionar_log(f"E-mail enviado com sucesso para: {destinatario} pela conta {self.EMAIL_REMETENTE_CORPORATIVO}")
-        return True
+            outlook = win32.Dispatch("Outlook.Application")
+            namespace = outlook.GetNamespace("MAPI")
+            etapa = log_etapa("aplicacao conectada", etapa)
+            mail = outlook.CreateItem(0)
+            try:
+                conta_envio = self.obter_conta_outlook(outlook, self.EMAIL_REMETENTE_CORPORATIVO)
+                self.forcar_conta_envio_outlook(mail, conta_envio)
+            except Exception as erro_conta:
+                self.adicionar_log(
+                    f"Conta {self.EMAIL_REMETENTE_CORPORATIVO} nao encontrada como conta direta no Outlook. "
+                    f"Tentando enviar em nome dela. Detalhe: {erro_conta}"
+                )
+                mail.SentOnBehalfOfName = self.EMAIL_REMETENTE_CORPORATIVO
+            etapa = log_etapa("mensagem e conta preparadas", etapa)
+            mail.To = destinatario
+            mail.Subject = assunto
+            mail.Body = corpo
+            if cc:
+                mail.CC = cc
+            if bcc:
+                mail.BCC = bcc
+            self.adicionar_log(f"Outlook: destinatario={destinatario}; copia={cc or 'sem copia'}")
+            etapa = log_etapa("corpo e destinatarios preenchidos", etapa)
+            mail.Save()
+            etapa = log_etapa("mensagem salva", etapa)
+            mail.Send()
+            etapa = log_etapa("comando Send concluido", etapa)
+            self.adicionar_log("Outlook: verificacao pos-envio desativada para este robo.")
+            self.adicionar_log(f"E-mail enviado com sucesso para: {destinatario} pela conta {self.EMAIL_REMETENTE_CORPORATIVO}")
+            return "enviado"
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     def forcar_conta_envio_outlook(self, mail, conta_envio):
         mail.SendUsingAccount = conta_envio
@@ -2258,11 +2451,9 @@ Checkout - Foco Aluguel de Carros"""
     # =========================
     def processar_contrato_com_cobranca(self, numero_contrato, valor_pagamento):
         self.verificar_controle_execucao()
-        self.ir_para_contratos()
-        self.verificar_controle_execucao()
-        self.buscar_contrato_seguro(numero_contrato, tentativas=self.MAX_TENTATIVAS_BUSCA)
-        self.validar_status_aguardando_devolucao()
-        self.abrir_edicao_contrato()
+        self.validar_status_aguardando_devolucao_contrato(numero_contrato)
+        self.abrir_edicao_contrato_direta(numero_contrato)
+        email_cliente = self.coletar_email_cliente_na_edicao()
         self.ir_para_pagamentos()
         self.clicar_carteira()
 
@@ -2272,7 +2463,7 @@ Checkout - Foco Aluguel de Carros"""
             return {"tipo": "cartao"}
 
         self.adicionar_log("Iniciando fluxo alternativo por link de pagamento...")
-        dados_link = self.executar_fluxo_link(valor_pagamento)
+        dados_link = self.executar_fluxo_link(valor_pagamento, email_cliente=email_cliente)
         return {
             "tipo": "link",
             "email": dados_link.get("email", ""),
@@ -2400,7 +2591,7 @@ Checkout - Foco Aluguel de Carros"""
                         )
 
                         try:
-                            self.enviar_email_link_pagamento(
+                            resultado_envio = self.enviar_email_link_pagamento(
                                 email_cliente=email_cliente,
                                 nome_cliente=nome,
                                 valor_pagamento=valor_cobrar,
@@ -2408,10 +2599,10 @@ Checkout - Foco Aluguel de Carros"""
                             )
                             status_email = "Enviado com Sucesso"
                             status_final = "Link Gerado e Enviado"
+                            self.adicionar_log(f"Link enviado por e-mail com sucesso para o contrato {contrato}.")
                             self.cobrancas_concluidas += 1
                             self.total_email_sucesso += 1
                             self.atualizar_resumo_execucao()
-                            self.adicionar_log(f"Link enviado por e-mail com sucesso para o contrato {contrato}.")
                         except Exception as erro_email:
                             status_email = "Erro no Envio"
                             status_final = "Link Gerado (E-mail falhou)"
