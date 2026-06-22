@@ -69,7 +69,7 @@
   "cobranca_pedagios": {
     "arquivo": "robo_cobranca_pedagios_v1.py",
     "classe": "RoboCobrancaPedagiosApp",
-    "versao": "1.0.0",
+    "versao": "1.0.11",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Pedagios",
     "geometry": "1180x780",
