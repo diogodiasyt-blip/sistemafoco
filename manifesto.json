@@ -13,7 +13,7 @@
   "contratos": {
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
-    "versao": "1.1.3"
+    "versao": "1.1.4"
   },
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
@@ -69,7 +69,7 @@
   "cobranca_pedagios": {
     "arquivo": "robo_cobranca_pedagios_v1.py",
     "classe": "RoboCobrancaPedagiosApp",
-    "versao": "1.0.12",
+    "versao": "1.0.18",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Pedagios",
     "geometry": "1180x780",
@@ -95,7 +95,7 @@
   "lancamentos_caixa": {
     "arquivo": "robo_lancamentos_caixa_v1.py",
     "classe": "RoboLancamentosCaixaApp",
-    "versao": "1.0.1",
+    "versao": "1.0.3",
     "constructor_mode": "external_process",
     "title": "Robo de Lancamentos de Caixa",
     "geometry": "1180x780",
@@ -103,5 +103,19 @@
     "card_title": "Caixa",
     "description": "Lancamentos de cash, despesas e depositos no Protheus com controle por planilha.",
     "show_support_buttons": false
+  },
+  "cash_coral_portal": {
+    "arquivo": "robo_cash_coral_portal_v1.py",
+    "classe": "RoboCashCoralPortalApp",
+    "versao": "1.0.0",
+    "constructor_mode": "external_process",
+    "title": "Atualizar Cash Coral",
+    "geometry": "760x640",
+    "resizable": true,
+    "card_title": "Cash Coral",
+    "description": "Baixa o Relatorio de Cash do Coral e atualiza as receitas no Portal Caixa.",
+    "tutorial_file": "tutorial_cash_coral_portal.txt",
+    "show_support_buttons": true,
+    "show_model_button": false
   }
 }
