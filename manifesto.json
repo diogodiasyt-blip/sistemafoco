@@ -95,7 +95,7 @@
   "lancamentos_caixa": {
     "arquivo": "robo_lancamentos_caixa_v1.py",
     "classe": "RoboLancamentosCaixaApp",
-    "versao": "1.0.3",
+    "versao": "1.0.4",
     "constructor_mode": "external_process",
     "title": "Robo de Lancamentos de Caixa",
     "geometry": "1180x780",
