@@ -321,20 +321,26 @@ def _read_material_source(workbook_path: Path, flow_key: str) -> pd.DataFrame:
         sheet_name = _resolve_sheet_name(excel.sheet_names, flow["sheet_name"])
     if sheet_name is None:
         raise RuntimeError(f"A aba {flow['sheet_name']} nao existe na planilha selecionada.")
-    dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=flow.get("header_row", 0))
-    normalized_columns = {_normalize_text(column): column for column in dataframe.columns}
-    rename_map: Dict[str, str] = {}
-    for canonical, aliases in flow["aliases"].items():
-        for alias in aliases:
-            original = normalized_columns.get(_normalize_text(alias))
-            if original is not None:
-                rename_map[original] = canonical
-                break
-    renamed = dataframe.rename(columns=rename_map).copy()
-    missing = [column for column in flow["required_columns"] if column not in renamed.columns]
-    if missing:
-        raise RuntimeError(f"A aba {flow['sheet_name']} esta sem colunas obrigatorias: {', '.join(missing)}")
-    return renamed
+
+    configured_header = int(flow.get("header_row", 0))
+    header_candidates = list(dict.fromkeys([configured_header, 0, 1, 2]))
+    last_missing: list[str] = []
+    for header_row in header_candidates:
+        dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=header_row)
+        normalized_columns = {_normalize_text(column): column for column in dataframe.columns}
+        rename_map: Dict[str, str] = {}
+        for canonical, aliases in flow["aliases"].items():
+            for alias in aliases:
+                original = normalized_columns.get(_normalize_text(alias))
+                if original is not None:
+                    rename_map[original] = canonical
+                    break
+        renamed = dataframe.rename(columns=rename_map).copy()
+        missing = [column for column in flow["required_columns"] if column not in renamed.columns]
+        if not missing:
+            return renamed
+        last_missing = missing
+    raise RuntimeError(f"A aba {flow['sheet_name']} esta sem colunas obrigatorias: {', '.join(last_missing)}")
 
 
 def _infer_period_from_sources(cash_df: pd.DataFrame, despesas_df: pd.DataFrame) -> str:
@@ -349,6 +355,13 @@ def _infer_period_from_sources(cash_df: pd.DataFrame, despesas_df: pd.DataFrame)
     if not dates:
         return ""
     return _format_period_text(min(dates), max(dates))
+
+
+def _filtrar_linhas_nao_baixadas(dataframe: pd.DataFrame, status_column: str) -> pd.DataFrame:
+    if status_column not in dataframe.columns:
+        return dataframe.copy()
+    status_normalizado = dataframe[status_column].fillna("").astype(str).map(_normalize_text)
+    return dataframe[status_normalizado != "BAIXADO"].copy()
 
 
 def _build_material_rows(cash_df: pd.DataFrame, despesas_df: pd.DataFrame, period_text: str) -> tuple[list[list], list[list]]:
@@ -505,12 +518,12 @@ def _save_rateio_workbooks(output_dir: Path, rows_by_store: dict[str, list[list]
         if total_value and percentages:
             percentages[-1] = round(100.0 - sum(percentages[:-1]), 2)
         for index, row in enumerate(rows, start=2):
-            row[2] = f"=D{index}/$K$2*100"
+            row[2] = f"=ROUND(D{index}/$K$2*100,2)"
             sheet.append(row)
             sheet.cell(row=index, column=1).value = str(row[0]) if row[0] else None
             sheet.cell(row=index, column=1).number_format = "@"
         _style_rateio_sheet(sheet, len(rows))
-        sheet["K2"] = "=SUM(D:D)"
+        sheet["K2"] = "=ROUND(SUM(D:D),2)"
         output_path = output_dir / f"{_safe_filename_part(loja)} - RATEIO.xlsx"
         workbook.save(output_path)
         _cache_rateio_formula_values(output_path, percentages, total_value)
@@ -531,6 +544,8 @@ def gerar_material_apoio_caixa(
 
     cash_df = _read_material_source(workbook_path, "cash")
     despesas_df = _read_material_source(workbook_path, "despesas")
+    cash_df = _filtrar_linhas_nao_baixadas(cash_df, FLOW_SPECS["cash"]["pending_column"])
+    despesas_df = _filtrar_linhas_nao_baixadas(despesas_df, FLOW_SPECS["despesas"]["pending_column"])
     period = _normalize_text(period_text) if period_text else _infer_period_from_sources(cash_df, despesas_df)
     if not period:
         raise RuntimeError("Nao foi possivel identificar o periodo. Informe o periodo do historico.")
@@ -555,6 +570,7 @@ class ValidationResult:
     flow_key: str
     flow_label: str
     sheet_name: str
+    header_row: int
     total_rows: int
     pending_rows: int
     launched_rows: int
@@ -2689,12 +2705,11 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             if not actual_sheet_name:
                 raise RuntimeError(f"A aba {flow['sheet_name']} não existe nesta planilha.")
 
-            dataframe = pd.read_excel(
+            renamed, missing_columns, detected_header_row = self._read_flow_dataframe_with_header(
                 workbook_path,
-                sheet_name=actual_sheet_name,
-                header=flow.get("header_row", 0),
+                actual_sheet_name,
+                flow,
             )
-            renamed, missing_columns = self._normalize_flow_dataframe(dataframe, flow)
 
             total_rows = len(renamed.index)
             pending_column = flow["pending_column"]
@@ -2709,6 +2724,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
                 flow_key=self.flow_var.get(),
                 flow_label=flow["label"],
                 sheet_name=actual_sheet_name,
+                header_row=detected_header_row,
                 total_rows=total_rows,
                 pending_rows=pending_rows,
                 launched_rows=launched_rows,
@@ -2811,6 +2827,32 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         missing_columns = [column for column in flow["required_columns"] if column not in renamed.columns]
         return renamed, missing_columns
 
+    def _read_flow_dataframe_with_header(
+        self,
+        workbook_path: Path,
+        sheet_name: str,
+        flow: Dict,
+    ) -> tuple[pd.DataFrame, list[str], int]:
+        configured_header = int(flow.get("header_row", 0))
+        header_candidates = list(dict.fromkeys([configured_header, 0, 1, 2]))
+        best_renamed: pd.DataFrame | None = None
+        best_missing: list[str] = list(flow["required_columns"])
+        best_header = configured_header
+
+        for header_row in header_candidates:
+            dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=header_row)
+            renamed, missing_columns = self._normalize_flow_dataframe(dataframe, flow)
+            if best_renamed is None or len(missing_columns) < len(best_missing):
+                best_renamed = renamed
+                best_missing = missing_columns
+                best_header = header_row
+            if not missing_columns:
+                return renamed, missing_columns, header_row
+
+        if best_renamed is None:
+            best_renamed = pd.DataFrame()
+        return best_renamed, best_missing, best_header
+
     def _load_store_guide(self) -> dict[str, str]:
         guide_path = _resolve_cash_guide_path()
         if not guide_path.exists():
@@ -2875,7 +2917,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         dataframe = pd.read_excel(
             workbook_path,
             sheet_name=self.validation_result.sheet_name,
-            header=flow.get("header_row", 0),
+            header=self.validation_result.header_row,
         )
         renamed, missing_columns = self._normalize_flow_dataframe(dataframe, flow)
         if missing_columns:
@@ -2892,7 +2934,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             raise RuntimeError("Nao ha linhas pendentes de Cash para lancar.")
 
         groups: list[CashGroup] = []
-        header_row = int(flow.get("header_row", 0))
+        header_row = self.validation_result.header_row if self.validation_result else int(flow.get("header_row", 0))
         for loja_raw, group_df in pending.groupby("LOJA", dropna=True):
             loja = _normalize_text(loja_raw)
             if not loja:
@@ -2932,7 +2974,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
         pending["TIPO_DESPESA_NORMALIZADO"] = pending["TIPO DA DESPESA"].map(_normalize_text)
 
         groups: list[ExpenseGroup] = []
-        header_row = int(flow.get("header_row", 0))
+        header_row = self.validation_result.header_row if self.validation_result else int(flow.get("header_row", 0))
         for loja_raw, group_df in pending.groupby("LOJA_NORMALIZADA", dropna=True):
             loja = _normalize_text(loja_raw)
             if not loja:
@@ -2988,7 +3030,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             raise RuntimeError("Planilha ainda nao validada.")
         workbook_path = Path(self.file_path_var.get().strip())
         flow = FLOW_SPECS[self.validation_result.flow_key]
-        header_excel_row = int(flow.get("header_row", 0)) + 1
+        header_excel_row = self.validation_result.header_row + 1
 
         workbook = load_workbook(workbook_path)
         sheet = workbook[self.validation_result.sheet_name]
@@ -3010,7 +3052,7 @@ class RoboLancamentosCaixaApp(ctk.CTk):
             raise RuntimeError("Planilha ainda nao validada.")
         workbook_path = Path(self.file_path_var.get().strip())
         flow = FLOW_SPECS[self.validation_result.flow_key]
-        header_excel_row = int(flow.get("header_row", 0)) + 1
+        header_excel_row = self.validation_result.header_row + 1
 
         workbook = load_workbook(workbook_path)
         sheet = workbook[self.validation_result.sheet_name]
