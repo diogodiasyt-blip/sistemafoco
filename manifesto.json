@@ -107,7 +107,7 @@
   "cash_coral_portal": {
     "arquivo": "robo_cash_coral_portal_v1.py",
     "classe": "RoboCashCoralPortalApp",
-    "versao": "1.0.0",
+    "versao": "1.0.1",
     "constructor_mode": "external_process",
     "title": "Atualizar Cash Coral",
     "geometry": "760x640",
