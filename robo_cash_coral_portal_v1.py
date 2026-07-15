@@ -168,6 +168,23 @@ def make_source_key(store_code: str, contract: str, date: str, amount: float) ->
     return f"{store_code.lower()}-{contract.lower()}-{date}-{cents}"
 
 
+def first_filled(record: dict[str, str], keys: list[str]) -> str:
+    for key in keys:
+        value = str(record.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def payment_store_code(record: dict[str, str]) -> str:
+    # Regra operacional: o cash entra na loja que recebeu o dinheiro, nao na loja de origem do contrato.
+    payment_store = first_filled(
+        record,
+        ["loja_pagamento", "loja_de_pagamento", "loja_pgto", "loja_pagto", "filial_pagamento"],
+    )
+    return (payment_store or record.get("loja", "")).strip().upper()
+
+
 def read_cash_csv(csv_path: Path) -> list[CashEntry]:
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
@@ -182,7 +199,7 @@ def read_cash_csv(csv_path: Path) -> list[CashEntry]:
         record = {headers[index]: row[index].strip() if index < len(row) else "" for index in range(len(headers))}
         if record.get("tipo", "").lower() != "money":
             continue
-        store_code = (record.get("loja_pagamento") or record.get("loja") or "").upper()
+        store_code = payment_store_code(record)
         store_id = STORE_IDS.get(store_code)
         contract = (record.get("contrato") or "").upper()
         if not store_id or not contract:
