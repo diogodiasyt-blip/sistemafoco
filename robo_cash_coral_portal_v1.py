@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import json
 import os
 import queue
@@ -26,7 +27,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_TITLE = "Atualizar Cash Coral"
-APP_GEOMETRY = "760x640"
+APP_GEOMETRY = "820x780"
 URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_RELATORIOS = "https://coral.aluguefoco.com.br/relatorios"
 REPORT_CATEGORY = "Financeiro"
@@ -107,6 +108,21 @@ class CashEntry:
     amount: float
     origin: str
     source_key: str
+
+
+@dataclass
+class CashAlertSummary:
+    store_id: str
+    store_code: str
+    recipients: list[str]
+    limit: float
+    initial_balance: float
+    revenue: float
+    expenses: float
+    deposits: float
+    transfers: float
+    expected_balance: float
+    physical_balance: float
 
 
 def config_path() -> Path:
@@ -225,6 +241,167 @@ def read_cash_csv(csv_path: Path) -> list[CashEntry]:
     return list(unique.values())
 
 
+def previous_period(period: str) -> str:
+    year_text, month_text = period.split("-")
+    year = int(year_text)
+    month = int(month_text)
+    if month == 1:
+        return f"{year - 1}-12"
+    return f"{year}-{month - 1:02d}"
+
+
+def brl(value: float) -> str:
+    text = f"{float(value or 0):,.2f}"
+    return "R$ " + text.replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def number_from_row(row: dict, key: str, default: float = 0.0) -> float:
+    try:
+        return float(row.get(key) if row.get(key) is not None else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def is_valid_foco_email(value: str) -> bool:
+    email = str(value or "").strip().lower()
+    return bool(re.match(r"^[^@\s]+@aluguefoco\.com\.br$", email))
+
+
+def group_by(items: list[dict], key: str) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for item in items:
+        group_key = str(item.get(key) or "")
+        grouped.setdefault(group_key, []).append(item)
+    return grouped
+
+
+def _outlook_app():
+    try:
+        import win32com.client as win32
+    except Exception as exc:
+        raise RuntimeError("pywin32/win32com nao esta disponivel para acessar o Outlook Desktop.") from exc
+    return win32.Dispatch("Outlook.Application")
+
+
+def _initialize_outlook_com():
+    try:
+        import pythoncom
+    except Exception as exc:
+        raise RuntimeError("pythoncom nao esta disponivel para inicializar o Outlook nesta thread.") from exc
+    pythoncom.CoInitialize()
+    return pythoncom
+
+
+def normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().casefold())
+
+
+def list_outlook_accounts() -> list[str]:
+    pythoncom = _initialize_outlook_com()
+    try:
+        outlook = _outlook_app()
+        namespace = outlook.GetNamespace("MAPI")
+        accounts: list[str] = []
+        for account in namespace.Accounts:
+            smtp = ""
+            name = ""
+            try:
+                smtp = str(account.SmtpAddress or "").strip()
+            except Exception:
+                smtp = ""
+            try:
+                name = str(account.DisplayName or "").strip()
+            except Exception:
+                name = ""
+            label = smtp or name
+            if label:
+                accounts.append(label)
+        return accounts
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def get_outlook_account(outlook, selected_account: str):
+    selected_norm = normalize_text(selected_account)
+    namespace = outlook.GetNamespace("MAPI")
+    available: list[str] = []
+    for account in namespace.Accounts:
+        smtp = ""
+        name = ""
+        try:
+            smtp = str(account.SmtpAddress or "").strip()
+        except Exception:
+            smtp = ""
+        try:
+            name = str(account.DisplayName or "").strip()
+        except Exception:
+            name = ""
+        label = smtp or name
+        if label:
+            available.append(label)
+        if selected_norm and selected_norm in {normalize_text(smtp), normalize_text(name), normalize_text(label)}:
+            return account
+    raise RuntimeError(
+        f"Conta de envio nao encontrada no Outlook: {selected_account}. "
+        f"Contas disponiveis: {', '.join(available) or 'nenhuma'}"
+    )
+
+
+def send_outlook_email(sender_account: str, recipients: list[str], subject: str, html_body: str, log) -> None:
+    clean_recipients = [email.strip().lower() for email in recipients if is_valid_foco_email(email)]
+    if not clean_recipients:
+        raise RuntimeError("Nenhum destinatario corporativo valido para envio.")
+    if not sender_account.strip():
+        raise RuntimeError("Informe a conta remetente do Outlook.")
+
+    pythoncom = _initialize_outlook_com()
+    started = time.perf_counter()
+    try:
+        outlook = _outlook_app()
+        outlook.GetNamespace("MAPI")
+        mail = outlook.CreateItem(0)
+        account = get_outlook_account(outlook, sender_account)
+        mail.SendUsingAccount = account
+        mail._oleobj_.Invoke(*(64209, 0, 8, 0, account))
+        mail.To = "; ".join(clean_recipients)
+        mail.Subject = subject
+        mail.HTMLBody = html_body
+        mail.Save()
+        mail.Send()
+        log(f"Outlook: e-mail enviado para {len(clean_recipients)} destinatario(s) em {time.perf_counter() - started:.1f}s")
+    finally:
+        pythoncom.CoUninitialize()
+
+
+def build_cash_alert_html(summary: CashAlertSummary, period: str) -> str:
+    safe_store = html.escape(summary.store_code)
+    return f"""
+    <html>
+      <body style="font-family:Arial,sans-serif;font-size:11pt;color:#1f2937;line-height:1.45;">
+        <p>Boa tarde, prezados,</p>
+        <p>
+          Identificamos que a loja <strong>{safe_store}</strong> está com saldo esperado acima do limite permitido
+          no Portal Caixa referente ao periodo <strong>{html.escape(period)}</strong>.
+        </p>
+        <table cellpadding="8" cellspacing="0" style="border-collapse:collapse;border:1px solid #e5e7eb;margin:12px 0;">
+          <tr><td style="border:1px solid #e5e7eb;">Limite permitido</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.limit)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Saldo inicial</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.initial_balance)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Receita no mes</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.revenue)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Despesas lancadas</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.expenses)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Depositos lancados</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.deposits)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Transferencias</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.transfers)}</strong></td></tr>
+          <tr><td style="border:1px solid #e5e7eb;">Saldo esperado</td><td style="border:1px solid #e5e7eb;"><strong>{brl(summary.expected_balance)}</strong></td></tr>
+        </table>
+        <p>
+          Caso tenha ocorrido deposito, despesa ou transferencia ainda nao lancada, pedimos que registre a movimentacao
+          no Portal Caixa para manter a conferencia correta.
+        </p>
+        <p>Ficamos a disposicao para eventuais duvidas.</p>
+      </body>
+    </html>
+    """
+
+
 class PortalCaixaClient:
     def __init__(self, admin_user: str, admin_password: str) -> None:
         self.admin_user = admin_user.strip().lower()
@@ -255,15 +432,22 @@ class PortalCaixaClient:
     def ignored_keys(self, keys: list[str]) -> set[str]:
         if not keys:
             return set()
-        quoted = ",".join(f'"{key}"' for key in keys)
-        response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/cash_entry_ignored?select=source_key&source_key=in.({quoted})",
-            headers=self.headers(),
-            timeout=30,
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(f"Falha ao consultar cash ignorado: {response.text}")
-        return {row["source_key"] for row in response.json()}
+        unique_keys = list(dict.fromkeys(key for key in keys if key))
+        ignored: set[str] = set()
+        batch_size = 100
+        for index in range(0, len(unique_keys), batch_size):
+            batch = unique_keys[index:index + batch_size]
+            quoted = ",".join(f'"{key}"' for key in batch)
+            response = requests.get(
+                f"{SUPABASE_URL}/rest/v1/cash_entry_ignored",
+                headers=self.headers(),
+                params={"select": "source_key", "source_key": f"in.({quoted})"},
+                timeout=30,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Falha ao consultar cash ignorado: {response.status_code} {response.text}")
+            ignored.update(row["source_key"] for row in response.json())
+        return ignored
 
     def apply_entries(self, entries: list[CashEntry]) -> int:
         ignored = self.ignored_keys([entry.source_key for entry in entries])
@@ -301,6 +485,125 @@ class PortalCaixaClient:
         if response.status_code >= 400:
             raise RuntimeError(f"Falha ao aplicar cash no Portal Caixa: {response.text}")
         return len(rows)
+
+    def get_rows(self, table: str, params: dict[str, str]) -> list[dict]:
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=self.headers(),
+            params=params,
+            timeout=45,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"Falha ao consultar {table}: {response.text}")
+        return response.json()
+
+    def cash_alerts_for_period(self, period: str) -> list[CashAlertSummary]:
+        previous = previous_period(period)
+        stores = self.get_rows(
+            "stores",
+            {"select": "id,code,initial_balance,balance_limit,active", "active": "eq.true", "order": "code.asc"},
+        )
+        profiles = self.get_rows(
+            "profiles",
+            {"select": "id,full_name,role,store_id,foco_email"},
+        )
+        entries = self.get_rows(
+            "cash_entries",
+            {
+                "select": "store_id,kind,amount,transfer_direction,period",
+                "period": f"eq.{period}",
+            },
+        )
+        reports = self.get_rows(
+            "cash_reports",
+            {
+                "select": "store_id,period,physical_balance",
+                "period": f"in.({period},{previous})",
+            },
+        )
+        closings = self.get_rows(
+            "cash_period_closings",
+            {
+                "select": "store_id,period,physical_balance",
+                "period": f"in.({period},{previous})",
+            },
+        )
+
+        profiles_by_store = group_by(
+            [
+                profile
+                for profile in profiles
+                if profile.get("store_id") and is_valid_foco_email(str(profile.get("foco_email") or ""))
+            ],
+            "store_id",
+        )
+        entries_by_store = group_by(entries, "store_id")
+        alerts: list[CashAlertSummary] = []
+
+        for store in stores:
+            store_id = str(store.get("id") or "")
+            recipients = sorted(
+                {
+                    str(profile.get("foco_email") or "").strip().lower()
+                    for profile in profiles_by_store.get(store_id, [])
+                }
+            )
+            if not recipients:
+                continue
+
+            limit = number_from_row(store, "balance_limit")
+            if limit <= 0:
+                continue
+
+            store_entries = entries_by_store.get(store_id, [])
+            previous_closing = next(
+                (row for row in closings if row.get("store_id") == store_id and row.get("period") == previous),
+                None,
+            )
+            previous_report = next(
+                (row for row in reports if row.get("store_id") == store_id and row.get("period") == previous),
+                None,
+            )
+            current_report = next(
+                (row for row in reports if row.get("store_id") == store_id and row.get("period") == period),
+                None,
+            )
+            initial_balance = (
+                number_from_row(previous_closing, "physical_balance")
+                if previous_closing
+                else number_from_row(previous_report, "physical_balance")
+                if previous_report
+                else number_from_row(store, "initial_balance")
+            )
+            revenue = sum(number_from_row(entry, "amount") for entry in store_entries if entry.get("kind") == "receita")
+            expenses = sum(number_from_row(entry, "amount") for entry in store_entries if entry.get("kind") == "despesa")
+            deposits = sum(number_from_row(entry, "amount") for entry in store_entries if entry.get("kind") == "deposito")
+            transfers = sum(
+                -number_from_row(entry, "amount")
+                if entry.get("transfer_direction") == "saida"
+                else number_from_row(entry, "amount")
+                for entry in store_entries
+                if entry.get("kind") == "transferencia"
+            )
+            expected_balance = initial_balance + revenue - expenses - deposits + transfers
+            if expected_balance <= limit:
+                continue
+            alerts.append(
+                CashAlertSummary(
+                    store_id=store_id,
+                    store_code=str(store.get("code") or store_id).upper(),
+                    recipients=recipients,
+                    limit=limit,
+                    initial_balance=initial_balance,
+                    revenue=revenue,
+                    expenses=expenses,
+                    deposits=deposits,
+                    transfers=transfers,
+                    expected_balance=expected_balance,
+                    physical_balance=number_from_row(current_report, "physical_balance") if current_report else 0,
+                )
+            )
+        return alerts
 
 
 class CoralCashDownloader:
@@ -618,6 +921,8 @@ class RoboCashCoralPortalApp(ctk.CTk):
         self.coral_password_var = ctk.StringVar(value=config.get("coral_password", ""))
         self.portal_admin_var = ctk.StringVar(value=config.get("portal_admin", "admin"))
         self.portal_password_var = ctk.StringVar(value=config.get("portal_password", ""))
+        self.outlook_sender_var = ctk.StringVar(value=config.get("outlook_sender", ""))
+        self.send_alerts_var = ctk.BooleanVar(value=bool(config.get("send_alerts", False)))
         self.start_date_var = ctk.StringVar(value=yesterday.strftime("%d/%m/%Y"))
         self.end_date_var = ctk.StringVar(value=yesterday.strftime("%d/%m/%Y"))
         self.visible_var = ctk.BooleanVar(value=bool(config.get("visible", True)))
@@ -643,6 +948,7 @@ class RoboCashCoralPortalApp(ctk.CTk):
         self._header(container)
         self._credentials(container)
         self._period(container)
+        self._email_alerts(container)
         self._execution(container)
         self._logs(container)
 
@@ -697,8 +1003,23 @@ class RoboCashCoralPortalApp(ctk.CTk):
             border_color=CARD_BORDER,
         ).grid(row=2, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 14))
 
+    def _email_alerts(self, parent) -> None:
+        card = self._section(parent, "Alertas por e-mail", 3)
+        card.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkCheckBox(
+            card,
+            text="Depois de atualizar o cash, enviar alerta para lojas acima do limite",
+            variable=self.send_alerts_var,
+            text_color="#242424",
+            fg_color=BUTTON_BG,
+            hover_color=BUTTON_ACTIVE_BG,
+            border_color=CARD_BORDER,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=14, pady=(8, 10))
+        self._field(card, "Conta remetente Outlook", self.outlook_sender_var).grid(row=2, column=0, sticky="ew", padx=(14, 8), pady=(0, 14))
+        self._secondary_button(card, "Listar contas", self.list_outlook_accounts).grid(row=2, column=1, sticky="ew", padx=(8, 14), pady=(21, 14))
+
     def _execution(self, parent) -> None:
-        card = self._section(parent, "Execucao", 3)
+        card = self._section(parent, "Execucao", 4)
         card.grid_columnconfigure((0, 1, 2), weight=1)
         ctk.CTkLabel(card, textvariable=self.status_var, text_color=MUTED_TEXT, font=("Segoe UI", 13)).grid(
             row=1, column=0, columnspan=3, sticky="w", padx=14, pady=(8, 8)
@@ -711,7 +1032,7 @@ class RoboCashCoralPortalApp(ctk.CTk):
         self._secondary_button(card, "Fim de semana", self.set_weekend).grid(row=3, column=2, sticky="ew", padx=(8, 14), pady=(0, 14))
 
     def _logs(self, parent) -> None:
-        card = self._section(parent, "Log", 4)
+        card = self._section(parent, "Log", 5)
         card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(1, weight=1)
         self.log_box = ctk.CTkTextbox(card, fg_color="#fffafa", border_color=CARD_BORDER, border_width=1, text_color="#242424", font=("Consolas", 12))
@@ -730,6 +1051,8 @@ class RoboCashCoralPortalApp(ctk.CTk):
                 raise ValueError("Informe usuario e senha do Coral.")
             if not self.portal_admin_var.get().strip() or not self.portal_password_var.get().strip():
                 raise ValueError("Informe usuario e senha admin do Portal Caixa.")
+            if self.send_alerts_var.get() and not self.outlook_sender_var.get().strip():
+                raise ValueError("Informe a conta remetente do Outlook para enviar alertas.")
         except Exception as exc:
             messagebox.showwarning("Validacao", str(exc))
             return
@@ -740,6 +1063,8 @@ class RoboCashCoralPortalApp(ctk.CTk):
                 "coral_password": self.coral_password_var.get(),
                 "portal_admin": self.portal_admin_var.get().strip(),
                 "portal_password": self.portal_password_var.get(),
+                "outlook_sender": self.outlook_sender_var.get().strip(),
+                "send_alerts": self.send_alerts_var.get(),
                 "visible": self.visible_var.get(),
             }
         )
@@ -766,10 +1091,44 @@ class RoboCashCoralPortalApp(ctk.CTk):
             client = PortalCaixaClient(self.portal_admin_var.get().strip(), self.portal_password_var.get())
             client.login()
             applied = client.apply_entries(entries)
+            sent_alerts = 0
+            skipped_alerts = 0
+            if self.send_alerts_var.get():
+                self.progress.set(0.82)
+                alert_period = end.strftime("%Y-%m")
+                self._log(f"Consultando alertas de saldo acima do limite para {alert_period}...")
+                alerts = client.cash_alerts_for_period(alert_period)
+                self._log(f"Lojas acima do limite com e-mail cadastrado: {len(alerts)}")
+                for alert in alerts:
+                    try:
+                        subject = f"[Portal Caixa] Saldo acima do limite - {alert.store_code}"
+                        send_outlook_email(
+                            self.outlook_sender_var.get().strip(),
+                            alert.recipients,
+                            subject,
+                            build_cash_alert_html(alert, alert_period),
+                            self._log,
+                        )
+                        sent_alerts += 1
+                        self._log(
+                            f"Alerta enviado: {alert.store_code} | saldo {brl(alert.expected_balance)} | limite {brl(alert.limit)}"
+                        )
+                    except Exception as exc:
+                        skipped_alerts += 1
+                        self._log(f"Falha ao enviar alerta {alert.store_code}: {exc}")
             self.progress.set(1)
             self.status_var.set("Atualizacao concluida.")
             self._log(f"Cash aplicado no Portal Caixa: {applied}")
-            self.after(0, lambda: messagebox.showinfo("Concluido", f"Cash atualizado. Lancamentos aplicados: {applied}"))
+            if self.send_alerts_var.get():
+                self._log(f"Alertas enviados: {sent_alerts}. Falhas: {skipped_alerts}.")
+            self.after(
+                0,
+                lambda: messagebox.showinfo(
+                    "Concluido",
+                    f"Cash atualizado. Lancamentos aplicados: {applied}"
+                    + (f"\nAlertas enviados: {sent_alerts}. Falhas: {skipped_alerts}." if self.send_alerts_var.get() else ""),
+                ),
+            )
         except Exception as exc:
             self.progress.set(0)
             self.status_var.set("Falha na atualizacao.")
@@ -785,6 +1144,19 @@ class RoboCashCoralPortalApp(ctk.CTk):
         today = datetime.now()
         self.start_date_var.set((today - timedelta(days=3)).strftime("%d/%m/%Y"))
         self.end_date_var.set((today - timedelta(days=1)).strftime("%d/%m/%Y"))
+
+    def list_outlook_accounts(self) -> None:
+        try:
+            accounts = list_outlook_accounts()
+            if not accounts:
+                messagebox.showwarning("Outlook", "Nenhuma conta encontrada no Outlook.")
+                return
+            self._log("Contas Outlook disponiveis: " + ", ".join(accounts))
+            if not self.outlook_sender_var.get().strip():
+                self.outlook_sender_var.set(accounts[0])
+        except Exception as exc:
+            self._log(f"Falha ao listar contas Outlook: {exc}")
+            messagebox.showerror("Outlook", str(exc))
 
     def _log(self, message: str) -> None:
         self.log_queue.put(f"[{datetime.now():%H:%M:%S}] {message}")
