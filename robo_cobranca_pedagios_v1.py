@@ -9,7 +9,7 @@ import threading
 import time
 import unicodedata
 import html
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
 from datetime import datetime
 from datetime import timedelta
@@ -69,7 +69,8 @@ PENDING_D0_SYNCED_FILENAME = "pendencias_d0_sincronizadas.jsonl"
 PROCESSING_EVENTS_PREFIX = "registros_processamento"
 PROCESSING_EVENTS_SYNCED_PREFIX = "registros_processamento_sincronizados"
 PROCESSING_SYNC_BATCH_SIZE = 50
-CORAL_OPERATION_MAX_ATTEMPTS = 3
+CORAL_OPERATION_MAX_ATTEMPTS = 2
+CORAL_LOCAL_ACTION_MAX_ATTEMPTS = 2
 DEFAULT_CORAL_HEADLESS = True
 PEDAGIOS_REPORT_APP_URL = "https://consulta-pedagios.netlify.app/"
 RELATORIOS_PDF_DIR = APP_DATA_DIR / "relatorios_pdf"
@@ -88,11 +89,13 @@ WHATSAPP_PEDAGIOS_URL = (
     "Por%20favor%2C%20envie%20essa%20mensagem%20e%20após%20isso%2C%20selecione%20a%20opção%20"
     "%22Contratuais%20e%20Locações%22%20no%20menu%20inicial."
 )
-SIGNATURE_IMAGE_PATH = Path(__file__).resolve().parent.parent / "assets" / "assinatura_email_pedagio_whatsapp.png"
+SIGNATURE_IMAGE_FILENAME = "assinatura_email_pedagio_whatsapp.png"
+SIGNATURE_IMAGE_PATH = Path(__file__).resolve().parent.parent / "assets" / SIGNATURE_IMAGE_FILENAME
 SIGNATURE_CONTENT_ID = "assinatura_pedagios@foco"
 ACTION_UPDATE_QUEUE = "Atualizar fila"
 ACTION_PROCESS_D0 = "Processar D0"
 ACTION_PROCESS_D2 = "Processar D0+2"
+ACTION_PROCESS_CAMPAIGN_CARD = "Campanha e-mail + cartao"
 ACTION_PROCESS_D45 = "Processar D0+4/D0+5"
 ACTION_PROCESS_D7 = "Processar D0+7"
 ACTION_PROCESS_ALL = "Processar todos aptos"
@@ -100,6 +103,7 @@ ACTION_KEYS = [
     ACTION_UPDATE_QUEUE,
     ACTION_PROCESS_D0,
     ACTION_PROCESS_D2,
+    ACTION_PROCESS_CAMPAIGN_CARD,
     ACTION_PROCESS_D45,
     ACTION_PROCESS_D7,
     ACTION_PROCESS_ALL,
@@ -108,6 +112,7 @@ ACTION_LABELS = {
     ACTION_UPDATE_QUEUE: "Atualizar fila",
     ACTION_PROCESS_D0: "Etapa 1 - Aviso e link",
     ACTION_PROCESS_D2: "Etapa 2 - Cartao e link residual",
+    ACTION_PROCESS_CAMPAIGN_CARD: "Campanha - E-mail + cartao imediato",
     ACTION_PROCESS_D45: "Etapa 3 - Nova tentativa e cobranca firme",
     ACTION_PROCESS_D7: "Etapa 4 - Aviso de negativacao",
     ACTION_PROCESS_ALL: "Processar todos aptos",
@@ -117,11 +122,14 @@ ACTION_RULES = {
     ACTION_UPDATE_QUEUE: "Atualiza os indicadores lendo a base operacional.",
     ACTION_PROCESS_D0: "Etapa 1: envia o aviso inicial com link de pagamento. A proxima etapa fica apta apos 4 dias.",
     ACTION_PROCESS_D2: "Etapa 2: tenta os cartoes dos contratos; se sobrar saldo, envia link residual. A proxima etapa fica apta apos 4 dias.",
+    ACTION_PROCESS_CAMPAIGN_CARD: "Campanha: envia e-mails sem link apenas para clientes que ja receberam link D0 e, em seguida, tenta cobrar cada contrato no cartao pelo valor das tags daquele contrato.",
     ACTION_PROCESS_D45: "Etapa 3: repete tentativa de cartao e link residual com e-mail em tom mais firme.",
     ACTION_PROCESS_D7: "Etapa 4: envia o aviso de negativacao para pendencias nao regularizadas.",
     ACTION_PROCESS_ALL: "Processamento em lote ainda nao implementado.",
 }
 ACTION_KEY_BY_LABEL = {label: key for key, label in ACTION_LABELS.items()}
+EVENT_EMAIL_D0_ENVIADO = "EMAIL_D0_ENVIADO"
+EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO = "EMAIL_CAMPANHA_CARTAO_ENVIADO"
 
 URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_DASHBOARD = "https://coral.aluguefoco.com.br/precificacao/dashboard"
@@ -144,6 +152,12 @@ XPATH_BOTAO_AVANCAR_FLUXO_EDICAO_3 = "/html/body/foco-app/div[1]/foco-rent-agree
 XPATH_BOTOES_RODAPE_EDICAO = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[3]/div/div/div[2]//button"
 XPATH_RESUMO_PAGAMENTO_TITULO = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[1]/div/div[1]"
 XPATH_POPUP_SIM = "(//ngb-modal-window//foco-confirm-modal//button[normalize-space()='Sim'])[last()]"
+XPATH_POPUP_SAIR_DESCARTAR = (
+    "(//ngb-modal-window//button["
+    "contains(translate(normalize-space(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'SAIR') "
+    "or contains(translate(normalize-space(), 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'DESCART')"
+    "])[last()]"
+)
 XPATH_BOTAO_CARTEIRA = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[1]/div[1]/button[6]"
 XPATH_BOTAO_LINK = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[1]/div[1]/button[5]"
 XPATH_CAMPO_VALOR_PAGAMENTO_CARTAO = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[11]/div/div[2]/foco-form-input/div/div[1]/input"
@@ -246,9 +260,55 @@ class ResultadoD2Pedagio:
     detalhe: str
 
 
+@dataclass(frozen=True)
+class CampanhaCartaoPedagios:
+    emails: list[EmailD0Pedagio]
+    contratos: list[ContratoD2Pedagio]
+    clientes_com_link: int
+    clientes_sem_link: int
+    clientes_email_previo: frozenset[str] = field(default_factory=frozenset)
+
+
 def _normalizar_texto(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or "")).encode("ASCII", "ignore").decode("ASCII")
     return " ".join(text.strip().upper().split())
+
+
+def _corrigir_texto_mojibake(value: object) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    if any(marker in text for marker in ("Ã", "Â", "\ufffd")):
+        try:
+            repaired = text.encode("latin1").decode("utf-8")
+            if "\ufffd" not in repaired:
+                return repaired
+        except Exception:
+            pass
+    return text
+
+
+def _resolve_asset_path(default_path: str | Path, filename: str) -> Path:
+    default = Path(default_path)
+    candidates: list[Path] = []
+    env_assets = os.environ.get("FOCO_ASSETS_DIR", "").strip()
+    if env_assets:
+        candidates.append(Path(env_assets) / filename)
+    candidates.extend(
+        [
+            default,
+            Path(__file__).resolve().parent.parent / "assets" / filename,
+            Path.cwd() / "DESENVOLVIMENTO" / "assets" / filename,
+            Path.cwd() / "assets" / filename,
+        ]
+    )
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except Exception:
+            continue
+    return candidates[0] if candidates else default
 
 
 def _parse_date(value: object) -> date | None:
@@ -650,7 +710,7 @@ def _is_valid_email(value: object) -> bool:
 
 
 def _canal_filtro_ativo(canal: object) -> bool:
-    normalized = _normalizar_texto(canal)
+    normalized = _normalizar_texto(_corrigir_texto_mojibake(canal))
     return normalized not in {"", "TODOS", "TODOS OS CANAIS"}
 
 
@@ -661,7 +721,9 @@ def _canal_do_registro(record: dict[str, object]) -> object:
 def _registro_pertence_ao_canal(record: dict[str, object], canal: object) -> bool:
     if not _canal_filtro_ativo(canal):
         return True
-    return _normalizar_texto(_canal_do_registro(record)) == _normalizar_texto(canal)
+    return _normalizar_texto(_corrigir_texto_mojibake(_canal_do_registro(record))) == _normalizar_texto(
+        _corrigir_texto_mojibake(canal)
+    )
 
 
 def montar_url_edicao_contrato_coral(contrato: str) -> str:
@@ -804,6 +866,58 @@ def preparar_email_d0_com_link(email: EmailD0Pedagio, link_pagamento: str) -> Em
     return replace(email, corpo=corpo, link_pagamento=link)
 
 
+def _extrair_bloco_dados_locacao(corpo: str) -> str:
+    text = str(corpo or "")
+    start = text.find("Dados da Loca")
+    if start < 0:
+        return ""
+    end_markers = [
+        "Para sua comodidade",
+        "Link para pagamento:",
+        "O link permanecer",
+        "Caso tenha alguma",
+    ]
+    end_positions = [text.find(marker, start) for marker in end_markers if text.find(marker, start) >= 0]
+    end = min(end_positions) if end_positions else len(text)
+    return text[start:end].strip()
+
+
+def preparar_email_campanha_cartao_sem_link(email: EmailD0Pedagio, reaviso_link: bool = False) -> EmailD0Pedagio:
+    dados_locacao = _extrair_bloco_dados_locacao(email.corpo)
+    if not dados_locacao:
+        dados_locacao = (
+            "Resumo da pendencia:\n\n"
+            f"Quantidade total de passagens em pedagio: {email.total_pedagios}\n"
+            f"Valor total a regularizar: R$ {_format_brl(email.valor_total)}"
+        )
+
+    if reaviso_link:
+        abertura = (
+            "Identificamos valores pendentes referentes a utilizacao de pedagios durante sua locacao, "
+            "notificados pelas operadoras de tag apos o encerramento do contrato."
+        )
+    else:
+        abertura = (
+            "Identificamos valores pendentes referentes a utilizacao de pedagios durante sua locacao, "
+            "notificados pelas operadoras de tag apos o encerramento do contrato."
+        )
+
+    corpo = f"""Ola, {email.nome}!
+
+{abertura}
+
+{dados_locacao}
+
+Conforme previsto no Contrato de Locacao, informamos que sera realizada uma tentativa de debito no cartao cadastrado e utilizado durante a locacao, correspondente ao valor total informado acima, referente as passagens em pedagios identificadas apos o encerramento do contrato.
+
+Caso a transacao seja aprovada, o debito sera considerado quitado, nao sendo necessaria nenhuma acao adicional.
+
+Se, por qualquer motivo, a cobranca nao puder ser concluida (como cartao vencido, bloqueado, cancelado ou limite insuficiente), poderemos entrar em contato para disponibilizar outras formas de regularizacao do debito, conforme previsto contratualmente. Em caso de duvidas, nossa equipe permanece a disposicao. Basta responder a este e-mail ou entrar em contato por meio de nossos canais de atendimento: {WHATSAPP_PEDAGIOS_URL}
+"""
+    assunto = "Pendencia de pedagios: tentativa de cobranca no cartao cadastrado"
+    return replace(email, assunto=assunto, corpo=corpo, link_pagamento="")
+
+
 def _local_pending_dir(local_root: str | Path | None = None) -> Path:
     return Path(local_root) if local_root is not None else APP_DATA_DIR
 
@@ -882,6 +996,9 @@ def carregar_config_interface(config_path: str | Path = UI_CONFIG_PATH) -> dict[
     if not isinstance(data, dict):
         return defaults
     merged = defaults | data
+    for key in ("conta_envio", "canal_cobranca", "caminho_excel", "limite_execucao", "usuario_coral"):
+        if key in merged:
+            merged[key] = _corrigir_texto_mojibake(merged.get(key)).strip()
     merged["salvar_login_coral"] = bool(merged.get("salvar_login_coral"))
     merged["coral_headless"] = bool(merged.get("coral_headless", DEFAULT_CORAL_HEADLESS))
     return merged
@@ -901,11 +1018,11 @@ def salvar_config_interface(
     path = Path(config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "conta_envio": str(conta_envio or "").strip() or DEFAULT_OUTLOOK_ACCOUNT,
-        "canal_cobranca": str(canal_cobranca or "").strip() or DEFAULT_CANAL_COBRANCA,
-        "caminho_excel": str(caminho_excel or "").strip() or DEFAULT_EXCEL_URL,
-        "limite_execucao": str(limite_execucao or "").strip() or "10",
-        "usuario_coral": str(usuario_coral or "").strip(),
+        "conta_envio": _corrigir_texto_mojibake(conta_envio).strip() or DEFAULT_OUTLOOK_ACCOUNT,
+        "canal_cobranca": _corrigir_texto_mojibake(canal_cobranca).strip() or DEFAULT_CANAL_COBRANCA,
+        "caminho_excel": _corrigir_texto_mojibake(caminho_excel).strip() or DEFAULT_EXCEL_URL,
+        "limite_execucao": _corrigir_texto_mojibake(limite_execucao).strip() or "10",
+        "usuario_coral": _corrigir_texto_mojibake(usuario_coral).strip(),
         "salvar_login_coral": bool(salvar_login_coral),
         "coral_headless": bool(coral_headless),
     }
@@ -1076,7 +1193,7 @@ def _event_hash(parts: list[object]) -> str:
 def _deterministic_processing_event_id(tipo: str, payload: dict[str, object], processed_at: date | datetime) -> str:
     tipo_norm = str(tipo or "").strip()
     data = _event_datetime_text(processed_at)[:10]
-    if tipo_norm == "EMAIL_D0_ENVIADO":
+    if tipo_norm in {EVENT_EMAIL_D0_ENVIADO, EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO}:
         email = payload.get("email")
         email_data = email if isinstance(email, dict) else {}
         return _event_hash([tipo_norm, email_data.get("id_cliente"), email_data.get("link_pagamento")])
@@ -1173,6 +1290,42 @@ def carregar_pendencias_processamento_json(
     return list(pending_by_id.values())
 
 
+def _ids_clientes_com_email_campanha_registrado_json(
+    workbook_path: str | Path,
+    *,
+    hoje: date,
+    local_root: str | Path | None = None,
+    dias: int = 2,
+) -> set[str]:
+    ids: set[str] = set()
+    workbook_alvo = _workbook_identity(workbook_path)
+    for offset in range(max(dias, 1)):
+        data_ref = hoje - timedelta(days=offset)
+        for path in _processing_event_paths(workbook_path, data_ref, local_root):
+            for event in _read_jsonl(path):
+                if str(event.get("workbook") or "").casefold() != workbook_alvo:
+                    continue
+                if str(event.get("data_evento") or "") != _date_suffix(data_ref):
+                    continue
+                tipo = str(event.get("tipo") or "").strip()
+                payload = event.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if tipo == EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO:
+                    pass
+                elif tipo == EVENT_EMAIL_D0_ENVIADO and payload.get("campanha_cartao"):
+                    pass
+                else:
+                    continue
+                email_data = payload.get("email")
+                if not isinstance(email_data, dict):
+                    continue
+                id_cliente = str(email_data.get("id_cliente") or "").strip()
+                if id_cliente:
+                    ids.add(id_cliente)
+    return ids
+
+
 def contar_pendencias_processamento_recentes(
     workbook_path: str | Path,
     *,
@@ -1222,7 +1375,7 @@ def sincronizar_eventos_processamento_json(
     if not eventos:
         return {"eventos_pendentes": 0, "eventos_sincronizados": 0, "clientes_atualizados": 0, "contratos_atualizados": 0}
 
-    d0_por_grupo: dict[tuple[str, bool, str], list[EmailD0Pedagio]] = {}
+    d0_por_grupo: dict[tuple[str, bool, str, bool], list[EmailD0Pedagio]] = {}
     d2_resultados: list[ResultadoD2Pedagio] = []
     d2_links: list[dict[str, object]] = []
     synced_ids: list[str] = []
@@ -1235,14 +1388,15 @@ def sincronizar_eventos_processamento_json(
         if not isinstance(payload, dict):
             continue
         event_id = str(event.get("id_evento") or "").strip()
-        if tipo == "EMAIL_D0_ENVIADO":
+        if tipo in {EVENT_EMAIL_D0_ENVIADO, EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO}:
             email_data = payload.get("email")
             if not isinstance(email_data, dict):
                 continue
             conta_envio = str(payload.get("conta_envio") or DEFAULT_OUTLOOK_ACCOUNT)
             registrar_link = bool(payload.get("registrar_link"))
             usuario = str(payload.get("usuario") or "")
-            d0_por_grupo.setdefault((conta_envio, registrar_link, usuario), []).append(_email_d0_from_dict(email_data))
+            campanha_cartao = tipo == EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO or bool(payload.get("campanha_cartao"))
+            d0_por_grupo.setdefault((conta_envio, registrar_link, usuario, campanha_cartao), []).append(_email_d0_from_dict(email_data))
             synced_ids.append(event_id)
         elif tipo == "RESULTADO_D2":
             resultado_data = payload.get("resultado")
@@ -1254,7 +1408,7 @@ def sincronizar_eventos_processamento_json(
             d2_links.append(payload)
             synced_ids.append(event_id)
 
-    for (conta_envio, registrar_link, usuario), emails in d0_por_grupo.items():
+    for (conta_envio, registrar_link, usuario, campanha_cartao), emails in d0_por_grupo.items():
         clientes_atualizados += registrar_processamento_d0_excel(
             workbook_path,
             emails,
@@ -1262,6 +1416,7 @@ def sincronizar_eventos_processamento_json(
             enviado=True,
             registrar_link=registrar_link,
             usuario=usuario,
+            campanha_cartao=campanha_cartao,
         )
 
     if d2_resultados:
@@ -1338,7 +1493,7 @@ def registrar_pendencia_d0_json(
         raise ValueError("Pendencia D0 exige e-mail com link de pagamento.")
     record = {
         "id_evento": _pending_event_id_d0(email),
-        "tipo": "EMAIL_D0_ENVIADO",
+        "tipo": EVENT_EMAIL_D0_ENVIADO,
         "data_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "conta_envio": conta_envio,
         "registrar_link": bool(registrar_link),
@@ -1370,7 +1525,7 @@ def carregar_pendencias_d0_json(
             record_time = str(record.get("data_hora") or "").strip()
             if synced_at and record_time and record_time <= synced_at:
                 continue
-            if record.get("tipo") != "EMAIL_D0_ENVIADO":
+            if record.get("tipo") != EVENT_EMAIL_D0_ENVIADO:
                 continue
             if not isinstance(record.get("email"), dict):
                 continue
@@ -1449,7 +1604,7 @@ def _default_onedrive_roots() -> list[Path]:
 
 
 def resolver_caminho_excel_compartilhado(value: str | Path, search_roots: list[Path] | None = None) -> Path | None:
-    raw = str(value or "").strip().strip('"')
+    raw = _corrigir_texto_mojibake(value).strip().strip('"')
     if not raw:
         return None
 
@@ -1646,6 +1801,7 @@ def carregar_emails_d0_excel(
     hoje: date | None = None,
     limite: int | None = None,
     canal: str | None = None,
+    local_root: str | Path | None = None,
 ) -> list[EmailD0Pedagio]:
     workbook_path = Path(path)
     if not workbook_path.exists():
@@ -1658,6 +1814,23 @@ def carregar_emails_d0_excel(
         contratos = _sheet_records(workbook, SHEET_CONTRATOS, REQUIRED_D0_CONTRACT_COLUMNS)
     finally:
         workbook.close()
+
+    ids_processados_json: set[str] = set()
+    try:
+        for event in carregar_pendencias_processamento_json(workbook_path, data_ref=hoje, local_root=local_root):
+            if str(event.get("tipo") or "").strip() != EVENT_EMAIL_D0_ENVIADO:
+                continue
+            payload = event.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            email_data = payload.get("email")
+            if not isinstance(email_data, dict):
+                continue
+            id_processado = str(email_data.get("id_cliente") or "").strip()
+            if id_processado:
+                ids_processados_json.add(id_processado)
+    except Exception:
+        ids_processados_json = set()
 
     contratos_por_cliente: dict[str, list[dict[str, object]]] = {}
     for contrato in contratos:
@@ -1679,6 +1852,8 @@ def carregar_emails_d0_excel(
         if not _is_valid_email(cliente.get("EMAIL")):
             continue
         id_cliente = str(cliente.get("ID_CLIENTE") or cliente.get("DOCUMENTO") or "").strip()
+        if id_cliente in ids_processados_json:
+            continue
         documento_cliente = _digits_only(cliente.get("DOCUMENTO"))
         contratos_cliente = []
         for contrato in contratos_por_cliente.get(id_cliente, []):
@@ -1745,6 +1920,9 @@ def carregar_contratos_d2_excel(
         if limite is not None and len(fila) >= limite:
             break
         for contrato in contratos_cliente:
+            valor_contrato = round(_format_money(contrato.get("VALOR_A_COBRAR")), 2)
+            if valor_contrato <= 0:
+                continue
             fila.append(
                 ContratoD2Pedagio(
                     id_cliente=id_cliente,
@@ -1752,10 +1930,113 @@ def carregar_contratos_d2_excel(
                     documento=str(contrato.get("DOCUMENTO") or cliente.get("DOCUMENTO") or "").strip(),
                     contrato=str(contrato.get("CONTRATO") or "").strip(),
                     placa=str(contrato.get("PLACA") or "").strip(),
-                    valor=round(_format_money(contrato.get("VALOR_A_COBRAR")), 2),
+                    valor=valor_contrato,
                 )
             )
     return fila
+
+
+def preparar_campanha_cartao_excel(
+    path: str | Path,
+    hoje: date | None = None,
+    limite_clientes: int | None = None,
+    canal: str | None = None,
+    local_root: str | Path | None = None,
+) -> CampanhaCartaoPedagios:
+    workbook_path = Path(path)
+    if not workbook_path.exists():
+        raise FileNotFoundError(f"Planilha nao encontrada: {workbook_path}")
+
+    hoje = hoje or date.today()
+    ids_campanha_registrado_json = _ids_clientes_com_email_campanha_registrado_json(
+        workbook_path,
+        hoje=hoje,
+        local_root=local_root,
+    )
+
+    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+    try:
+        clientes = _sheet_records(workbook, SHEET_CLIENTES, REQUIRED_D0_CLIENT_COLUMNS)
+        contratos = _sheet_records(workbook, SHEET_CONTRATOS, REQUIRED_D0_CONTRACT_COLUMNS | {"CLIENTE", "DOCUMENTO"})
+    finally:
+        workbook.close()
+
+    contratos_por_cliente: dict[str, list[dict[str, object]]] = {}
+    for contrato in contratos:
+        if _normalizar_texto(contrato.get("STATUS_CARTAO")) != "PENDENTE":
+            continue
+        if not _registro_pertence_ao_canal(contrato, canal):
+            continue
+        if round(_format_money(contrato.get("VALOR_A_COBRAR")), 2) <= 0:
+            continue
+        id_cliente = str(contrato.get("ID_CLIENTE") or "").strip()
+        if not id_cliente:
+            continue
+        contratos_por_cliente.setdefault(id_cliente, []).append(contrato)
+
+    emails: list[EmailD0Pedagio] = []
+    contratos_campanha: list[ContratoD2Pedagio] = []
+    clientes_email_previo: set[str] = set()
+    clientes_com_link = 0
+    clientes_sem_link = 0
+    clientes_incluidos = 0
+    for cliente in clientes:
+        if limite_clientes is not None and clientes_incluidos >= limite_clientes:
+            break
+        if not _is_valid_email(cliente.get("EMAIL")):
+            continue
+        id_cliente = str(cliente.get("ID_CLIENTE") or cliente.get("DOCUMENTO") or "").strip()
+        if not id_cliente:
+            continue
+        email_campanha_ja_enviado = (
+            id_cliente in ids_campanha_registrado_json
+            or _normalizar_texto(cliente.get("STATUS_EMAIL_CAMPANHA")) == "EMAIL_ENVIADO"
+        )
+        if _is_paid(cliente.get("STATUS")) or _is_paid(cliente.get("ETAPA")):
+            continue
+        if _is_processing(cliente.get("STATUS")):
+            continue
+        reaviso_link = bool(str(cliente.get("LINK_D0") or "").strip())
+        if not reaviso_link:
+            continue
+        documento_cliente = _digits_only(cliente.get("DOCUMENTO"))
+        contratos_cliente: list[dict[str, object]] = []
+        for contrato in contratos_por_cliente.get(id_cliente, []):
+            documento_contrato = _digits_only(contrato.get("DOCUMENTO"))
+            if documento_cliente and documento_contrato and not _documentos_equivalentes(documento_cliente, documento_contrato):
+                continue
+            contratos_cliente.append(contrato)
+        if not contratos_cliente:
+            continue
+
+        email_base = _montar_email_d0(cliente, contratos_cliente)
+        if email_campanha_ja_enviado:
+            clientes_email_previo.add(id_cliente)
+        else:
+            emails.append(preparar_email_campanha_cartao_sem_link(email_base, reaviso_link=reaviso_link))
+        clientes_com_link += 1
+        clientes_incluidos += 1
+
+        for contrato in contratos_cliente:
+            valor_contrato = round(_format_money(contrato.get("VALOR_A_COBRAR")), 2)
+            contratos_campanha.append(
+                ContratoD2Pedagio(
+                    id_cliente=id_cliente,
+                    cliente=str(contrato.get("CLIENTE") or cliente.get("CLIENTE") or "").strip(),
+                    documento=str(contrato.get("DOCUMENTO") or cliente.get("DOCUMENTO") or "").strip(),
+                    contrato=str(contrato.get("CONTRATO") or "").strip(),
+                    placa=str(contrato.get("PLACA") or "").strip(),
+                    valor=valor_contrato,
+                )
+            )
+
+    return CampanhaCartaoPedagios(
+        emails=emails,
+        contratos=contratos_campanha,
+        clientes_com_link=clientes_com_link,
+        clientes_sem_link=clientes_sem_link,
+        clientes_email_previo=frozenset(clientes_email_previo),
+    )
 
 
 def _outlook_app():
@@ -1865,14 +2146,14 @@ def _preparar_assinatura_outlook(
     origem: str | Path = SIGNATURE_IMAGE_PATH,
     cache_root: str | Path | None = None,
 ) -> Path:
-    origem_path = Path(origem)
+    origem_path = _resolve_asset_path(Path(origem), SIGNATURE_IMAGE_FILENAME)
     if not origem_path.exists():
         raise FileNotFoundError(f"Assinatura de e-mail nao encontrada: {origem_path}")
     if cache_root is None:
         cache_root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SistemaFOCO" / "cache"
     cache_path = Path(cache_root)
     cache_path.mkdir(parents=True, exist_ok=True)
-    destino = cache_path / "assinatura_email_pedagio_whatsapp.png"
+    destino = cache_path / SIGNATURE_IMAGE_FILENAME
     if not destino.exists() or destino.stat().st_size != origem_path.stat().st_size:
         shutil.copy2(origem_path, destino)
     return destino
@@ -1978,12 +2259,13 @@ def criar_email_outlook(
     conta_envio: str,
     log_callback=None,
     anexos: list[str | Path] | None = None,
+    exigir_link: bool = True,
 ) -> str:
     if not _is_valid_email(email.destinatario):
         raise RuntimeError(f"E-mail invalido para {email.nome}: {email.destinatario}")
     if not conta_envio:
         raise RuntimeError("Selecione a conta do Outlook antes de processar D0.")
-    if not email.link_pagamento:
+    if exigir_link and not email.link_pagamento:
         raise RuntimeError(f"Link de pagamento ausente para {email.nome}.")
 
     def log_etapa(message: str, started_at: float) -> float:
@@ -2005,10 +2287,13 @@ def criar_email_outlook(
         etapa = log_etapa("mensagem e conta preparadas", etapa)
         mail.To = email.destinatario
         mail.Subject = email.assunto
-        if SIGNATURE_IMAGE_PATH.exists():
+        assinatura_origem = _resolve_asset_path(SIGNATURE_IMAGE_PATH, SIGNATURE_IMAGE_FILENAME)
+        if assinatura_origem.exists():
             assinatura_local = _preparar_assinatura_outlook()
             _anexar_imagem_inline_outlook(mail, assinatura_local)
             etapa = log_etapa("assinatura local anexada", etapa)
+        elif log_callback is not None:
+            log_callback(f"Outlook: assinatura local nao encontrada: {assinatura_origem}")
         for anexo in anexos or []:
             anexo_path = Path(anexo)
             if not anexo_path.exists():
@@ -2072,11 +2357,6 @@ def _safe_save_workbook(workbook, workbook_path: str | Path) -> None:
         try:
             if temp_file.exists():
                 temp_file.unlink()
-        except Exception:
-            pass
-        try:
-            if backup_file.exists():
-                backup_file.unlink()
         except Exception:
             pass
 
@@ -2158,6 +2438,7 @@ def registrar_processamento_d0_excel(
     processed_at: date | datetime | None = None,
     registrar_link: bool = False,
     usuario: str = "",
+    campanha_cartao: bool = False,
 ) -> int:
     if not emails:
         return 0
@@ -2197,9 +2478,22 @@ def registrar_processamento_d0_excel(
                 "VALOR_LINK_D0",
                 "DATA_LINK_D0",
                 "CONTRATO_REFERENCIA_LINK_D0",
+                "STATUS_EMAIL_CAMPANHA",
+                "DATA_EMAIL_CAMPANHA",
+                "CONTA_EMAIL_CAMPANHA",
             ],
         )
-        contratos_headers = _ensure_columns(contratos_sheet, ["STATUS_EMAIL_D0", "DATA_EMAIL_D0", "CONTA_EMAIL_D0"])
+        contratos_headers = _ensure_columns(
+            contratos_sheet,
+            [
+                "STATUS_EMAIL_D0",
+                "DATA_EMAIL_D0",
+                "CONTA_EMAIL_D0",
+                "STATUS_EMAIL_CAMPANHA",
+                "DATA_EMAIL_CAMPANHA",
+                "CONTA_EMAIL_CAMPANHA",
+            ],
+        )
         historico_headers = _ensure_columns(
             historico_sheet,
             ["DATA_HORA", "ID_CLIENTE", "DOCUMENTO", "CLIENTE", "CONTRATO", "ETAPA", "ACAO", "RESULTADO", "DETALHE", "USUARIO"],
@@ -2219,6 +2513,10 @@ def registrar_processamento_d0_excel(
             if email is None:
                 continue
             clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value=status_email)
+            if campanha_cartao:
+                clientes_sheet.cell(row=row, column=clientes_headers["STATUS_EMAIL_CAMPANHA"], value=status_email)
+                clientes_sheet.cell(row=row, column=clientes_headers["DATA_EMAIL_CAMPANHA"], value=_date_to_text(process_date))
+                clientes_sheet.cell(row=row, column=clientes_headers["CONTA_EMAIL_CAMPANHA"], value=conta_envio)
             if enviado:
                 clientes_sheet.cell(row=row, column=clientes_headers["ETAPA"], value="D0+2")
                 clientes_sheet.cell(row=row, column=clientes_headers["PROXIMA_ACAO"], value=_date_to_text(next_action))
@@ -2243,9 +2541,14 @@ def registrar_processamento_d0_excel(
             status_cartao_col = contratos_headers.get("STATUS_CARTAO")
             if status_cartao_col and _normalizar_texto(contratos_sheet.cell(row=row, column=status_cartao_col).value) != "PENDENTE":
                 continue
-            contratos_sheet.cell(row=row, column=contratos_headers["STATUS_EMAIL_D0"], value=status_email)
-            contratos_sheet.cell(row=row, column=contratos_headers["DATA_EMAIL_D0"], value=_date_to_text(process_date))
-            contratos_sheet.cell(row=row, column=contratos_headers["CONTA_EMAIL_D0"], value=conta_envio)
+            if campanha_cartao:
+                contratos_sheet.cell(row=row, column=contratos_headers["STATUS_EMAIL_CAMPANHA"], value=status_email)
+                contratos_sheet.cell(row=row, column=contratos_headers["DATA_EMAIL_CAMPANHA"], value=_date_to_text(process_date))
+                contratos_sheet.cell(row=row, column=contratos_headers["CONTA_EMAIL_CAMPANHA"], value=conta_envio)
+            else:
+                contratos_sheet.cell(row=row, column=contratos_headers["STATUS_EMAIL_D0"], value=status_email)
+                contratos_sheet.cell(row=row, column=contratos_headers["DATA_EMAIL_D0"], value=_date_to_text(process_date))
+                contratos_sheet.cell(row=row, column=contratos_headers["CONTA_EMAIL_D0"], value=conta_envio)
             contratos_por_cliente[id_cliente] = contratos_por_cliente.get(id_cliente, 0) + 1
 
         for email in emails:
@@ -2278,11 +2581,11 @@ def registrar_processamento_d0_excel(
                 "DOCUMENTO": "",
                 "CLIENTE": email.nome,
                 "CONTRATO": "",
-                "ETAPA": "D0",
-                "ACAO": "EMAIL_D0",
+                "ETAPA": "CAMPANHA_CARTAO" if campanha_cartao else "D0",
+                "ACAO": "EMAIL_CAMPANHA_CARTAO" if campanha_cartao else "EMAIL_D0",
                 "RESULTADO": status_email,
                 "DETALHE": detalhe,
-                "USUARIO": conta_envio,
+                "USUARIO": usuario or conta_envio,
             }
             for column, value in values.items():
                 historico_sheet.cell(row=row, column=historico_headers[column], value=value)
@@ -2297,6 +2600,8 @@ def _status_planilha_d2(status: str) -> str:
     normalized = _normalizar_texto(status)
     if normalized == "COBRADO":
         return "COBRADO"
+    if normalized in {"CARTAO RECUSADO SEM LINK", "CARTAO_RECUSADO_SEM_LINK", "CARTAO RECUSADO"}:
+        return "CARTAO_RECUSADO"
     if normalized in {"NAO COBRADO", "NAO_COBRADO", "SEM CARTAO", "CARTAO_RECUSADO"}:
         return "LINK_PAGAMENTO_PENDENTE"
     if normalized == "INTERROMPIDO":
@@ -2409,12 +2714,16 @@ def registrar_processamento_d2_excel(
                 clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value="LINK_PAGAMENTO_PENDENTE")
                 clientes_sheet.cell(row=row, column=clientes_headers["ETAPA"], value="D0+2_LINK")
                 clientes_sheet.cell(row=row, column=clientes_headers["PROXIMA_ACAO"], value=_date_to_text(process_date))
+            elif any(status == "CARTAO_RECUSADO" for status in statuses):
+                clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value="CARTAO_RECUSADO")
+                clientes_sheet.cell(row=row, column=clientes_headers["ETAPA"], value="COBRANCA_CARTAO")
+                clientes_sheet.cell(row=row, column=clientes_headers["PROXIMA_ACAO"], value=_date_to_text(process_date))
             elif any(status in {"ERRO_D0_2", "INTERROMPIDO"} for status in statuses):
                 clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value="ERRO_D0_2")
                 clientes_sheet.cell(row=row, column=clientes_headers["ETAPA"], value="D0+2")
                 clientes_sheet.cell(row=row, column=clientes_headers["PROXIMA_ACAO"], value=_date_to_text(process_date))
             elif statuses and all(status == "COBRADO" for status in statuses):
-                clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value="COBRADO")
+                clientes_sheet.cell(row=row, column=clientes_headers["STATUS"], value="PAGO")
                 clientes_sheet.cell(row=row, column=clientes_headers["ETAPA"], value="PAGO")
                 clientes_sheet.cell(row=row, column=clientes_headers["PROXIMA_ACAO"], value="")
 
@@ -3221,7 +3530,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         self._persist_interface_config()
 
     def _selected_canal(self) -> str:
-        return self.canal_cobranca_var.get().strip() or DEFAULT_CANAL_COBRANCA
+        return _corrigir_texto_mojibake(self.canal_cobranca_var.get()).strip() or DEFAULT_CANAL_COBRANCA
 
     def _on_canal_selected(self, _value: str | None = None) -> None:
         self._persist_interface_config()
@@ -3254,6 +3563,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             ACTION_UPDATE_QUEUE: self._refresh_queue,
             ACTION_PROCESS_D0: self._process_d0,
             ACTION_PROCESS_D2: self._process_d2,
+            ACTION_PROCESS_CAMPAIGN_CARD: self._process_campaign_card,
             ACTION_PROCESS_D45: lambda: self._not_ready("Retry/lembrete ainda nao implementado."),
             ACTION_PROCESS_D7: lambda: self._not_ready("Ultima etapa ainda nao implementada."),
             ACTION_PROCESS_ALL: lambda: self._not_ready("Processamento em lote ainda nao implementado."),
@@ -3288,14 +3598,30 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
     def _start_processing_control(self, workbook_path: Path) -> None:
         self.__dict__.setdefault("pause_requested", threading.Event()).clear()
         self.__dict__.setdefault("stop_requested", threading.Event()).clear()
+        self.current_processing_started_at = datetime.now()
         self.current_processing_workbook_path = workbook_path
+        self._log(f"Data operacional da execucao: {self.current_processing_started_at:%Y-%m-%d}.")
         self._set_processing_controls(True)
 
     def _finish_processing_control(self) -> None:
         self.__dict__.setdefault("pause_requested", threading.Event()).clear()
         self.__dict__.setdefault("stop_requested", threading.Event()).clear()
         self.current_processing_workbook_path = None
+        self.current_processing_started_at = None
         self._set_processing_controls(False)
+
+    def _processing_data_ref(self) -> date:
+        started_at = self.__dict__.get("current_processing_started_at")
+        if isinstance(started_at, datetime):
+            return started_at.date()
+        if isinstance(started_at, date):
+            return started_at
+        return date.today()
+
+    def _processing_event_datetime(self) -> datetime:
+        data_ref = self._processing_data_ref()
+        now = datetime.now()
+        return datetime.combine(data_ref, now.time().replace(microsecond=0))
 
     def _toggle_pause_processing(self) -> None:
         if self.processing_thread is None or not self.processing_thread.is_alive():
@@ -3421,7 +3747,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
 
     def _safe_click(self, xpath: str, description: str, timeout: int = 30) -> None:
         last_error = None
-        for attempt in range(1, 4):
+        for attempt in range(1, CORAL_LOCAL_ACTION_MAX_ATTEMPTS + 1):
             try:
                 element = self._wait_clickable(xpath, description, timeout=timeout)
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
@@ -3434,13 +3760,15 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 return
             except Exception as exc:
                 last_error = exc
-                self._log(f"Clique falhou em {description} ({attempt}/3): {exc}")
+                self._log(f"Clique falhou em {description} ({attempt}/{CORAL_LOCAL_ACTION_MAX_ATTEMPTS}): {exc}")
                 time.sleep(1)
-        raise RuntimeError(f"Nao foi possivel clicar em {description} apos 3 tentativas: {last_error}")
+        raise RuntimeError(
+            f"Nao foi possivel clicar em {description} apos {CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas: {last_error}"
+        )
 
     def _safe_type(self, xpath: str, value: str, description: str, timeout: int = 30, press_enter: bool = False) -> None:
         last_error = None
-        for attempt in range(1, 4):
+        for attempt in range(1, CORAL_LOCAL_ACTION_MAX_ATTEMPTS + 1):
             try:
                 element = self._wait_clickable(xpath, description, timeout=timeout)
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
@@ -3456,9 +3784,11 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 return
             except Exception as exc:
                 last_error = exc
-                self._log(f"Preenchimento falhou em {description} ({attempt}/3): {exc}")
+                self._log(f"Preenchimento falhou em {description} ({attempt}/{CORAL_LOCAL_ACTION_MAX_ATTEMPTS}): {exc}")
                 time.sleep(1)
-        raise RuntimeError(f"Nao foi possivel preencher {description} apos 3 tentativas: {last_error}")
+        raise RuntimeError(
+            f"Nao foi possivel preencher {description} apos {CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas: {last_error}"
+        )
 
     def _clear_input_field(self, element) -> None:
         element.click()
@@ -3490,7 +3820,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
     def _fill_and_validate_money(self, xpath: str, value: object, description: str, timeout: int = 30) -> None:
         expected_text = self._format_money_for_coral(value)
         last_read = ""
-        for attempt in range(1, 4):
+        for attempt in range(1, CORAL_LOCAL_ACTION_MAX_ATTEMPTS + 1):
             try:
                 element = self._wait_clickable(xpath, description, timeout=timeout)
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
@@ -3500,10 +3830,10 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 last_read = self._read_input_value(xpath, description, timeout=10)
                 if self._money_values_match(expected_text, last_read):
                     self._log(f"Valor validado em {description}: {expected_text}")
-                    return
+                return
             except Exception as exc:
                 last_read = f"erro: {exc}"
-                self._log(f"Erro ao preencher valor em {description} ({attempt}/3): {exc}")
+                self._log(f"Erro ao preencher valor em {description} ({attempt}/{CORAL_LOCAL_ACTION_MAX_ATTEMPTS}): {exc}")
                 time.sleep(1)
         raise RuntimeError(f"Valor divergente em {description}. Esperado {expected_text}, lido {last_read or '<vazio>'}.")
 
@@ -3594,13 +3924,15 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
 
     def _executar_com_recuperacao_coral(self, contrato: str, descricao: str, operacao):
         ultimo_erro = None
-        for nivel in range(1, 4):
+        for nivel in range(1, CORAL_OPERATION_MAX_ATTEMPTS + 1):
             try:
                 if nivel == 2:
                     self._log(f"Recuperacao nivel 2 para {contrato}: retornando a tela base de contratos.")
-                    self._garantir_tela_base_coral()
-                elif nivel == 3:
-                    self._reiniciar_sessao_coral(str(ultimo_erro or descricao))
+                    try:
+                        self._garantir_tela_base_coral()
+                    except Exception as recovery_exc:
+                        self._log(f"Retorno a tela base falhou para {contrato}: {recovery_exc}. Reiniciando sessao.")
+                        self._reiniciar_sessao_coral(str(recovery_exc))
                 resultado = operacao()
                 if nivel > 1:
                     self._log(f"Recuperacao concluida no nivel {nivel}: {descricao} | contrato {contrato}.")
@@ -3609,7 +3941,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 raise
             except Exception as exc:
                 ultimo_erro = exc
-                self._log(f"Falha no nivel {nivel}/3 ao {descricao} para {contrato}: {exc}")
+                self._log(f"Falha no nivel {nivel}/{CORAL_OPERATION_MAX_ATTEMPTS} ao {descricao} para {contrato}: {exc}")
         raise RuntimeError(
             f"Nao foi possivel {descricao} para o contrato {contrato} apos recuperacao completa: {ultimo_erro}"
         ) from ultimo_erro
@@ -3629,7 +3961,13 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         url_edicao = montar_url_edicao_contrato_coral(contrato)
         self._log(f"Abrindo edicao direta do contrato {contrato}: {url_edicao}")
         try:
+            self._click_popup_sair_descartar_if_visible(timeout=1)
             self.driver.get(url_edicao)
+            if self._click_popup_sair_descartar_if_visible(timeout=3):
+                url_atual = str(getattr(self.driver, "current_url", "") or "")
+                if not url_coral_corresponde_ao_contrato(url_atual, contrato):
+                    self._log("Reabrindo contrato apos descartar alteracoes pendentes.")
+                    self.driver.get(url_edicao)
             self._click_popup_sim_if_visible(timeout=5)
             self._wait_visible(XPATH_ABA_PAGAMENTOS_RAPIDA_ICONE, "tela de edicao do contrato", timeout=45)
             self._log(f"Tela de edicao aberta diretamente para contrato {contrato}.")
@@ -3641,11 +3979,20 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         self._buscar_contrato_coral(contrato)
         self._safe_click(XPATH_MAIS_OPCOES_CONTRATO, "mais opcoes do contrato", timeout=30)
         self._safe_click(XPATH_EDITAR_CONTRATO, "editar contrato", timeout=30)
+        if self._click_popup_sair_descartar_if_visible(timeout=3):
+            self._safe_click(XPATH_MAIS_OPCOES_CONTRATO, "mais opcoes do contrato apos descarte", timeout=30)
+            self._safe_click(XPATH_EDITAR_CONTRATO, "editar contrato apos descarte", timeout=30)
         self._click_popup_sim_if_visible(timeout=5)
         self._wait_visible(XPATH_ABA_PAGAMENTOS_RAPIDA_ICONE, "tela de edicao do contrato", timeout=45)
         self._log(f"Tela de edicao aberta para contrato {contrato}.")
 
-    def _clicar_botao_sim_repetidamente(self, xpath: str, description: str, timeout: int = 3, max_clicks: int = 5) -> int:
+    def _clicar_botao_sim_repetidamente(
+        self,
+        xpath: str,
+        description: str,
+        timeout: int = 3,
+        max_clicks: int = CORAL_LOCAL_ACTION_MAX_ATTEMPTS,
+    ) -> int:
         clicks = 0
         for tentativa in range(1, max_clicks + 1):
             try:
@@ -3664,8 +4011,19 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             XPATH_POPUP_SIM,
             "botao Sim do popup",
             timeout=timeout,
-            max_clicks=5,
+            max_clicks=CORAL_LOCAL_ACTION_MAX_ATTEMPTS,
         ) > 0
+
+    def _click_popup_sair_descartar_if_visible(self, timeout: int = 2) -> bool:
+        try:
+            self._wait_clickable(XPATH_POPUP_SAIR_DESCARTAR, "botao Sair/Descartar do popup", timeout=timeout)
+            self._safe_click(XPATH_POPUP_SAIR_DESCARTAR, "botao Sair/Descartar do popup", timeout=5)
+            self.popup_edicao_tratado = False
+            self._log("Popup de alteracoes pendentes descartado com Sair.")
+            time.sleep(0.5)
+            return True
+        except Exception:
+            return False
 
     def _fechar_modal_carregar_cliente_se_visivel(self, timeout: int = 2) -> bool:
         try:
@@ -3673,7 +4031,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 XPATH_BOTAO_SIM_MODAL_CARREGAR_CLIENTE,
                 "botao Sim do modal Carregar Cliente",
                 timeout=timeout,
-                max_clicks=5,
+                max_clicks=CORAL_LOCAL_ACTION_MAX_ATTEMPTS,
             )
             if cliques_sim:
                 return True
@@ -3689,6 +4047,19 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             return True
         except Exception:
             return False
+
+    def _tratar_modais_edicao_se_visiveis(self, timeout: int = 2, permitir_fechar_modal: bool = True) -> bool:
+        popup_tratado = self._click_popup_sim_if_visible(timeout=timeout)
+        if permitir_fechar_modal:
+            modal_tratado = self._fechar_modal_carregar_cliente_se_visivel(timeout=timeout)
+        else:
+            modal_tratado = self._clicar_botao_sim_repetidamente(
+                XPATH_BOTAO_SIM_MODAL_CARREGAR_CLIENTE,
+                "botao Sim do modal Carregar Cliente",
+                timeout=timeout,
+                max_clicks=CORAL_LOCAL_ACTION_MAX_ATTEMPTS,
+            ) > 0
+        return popup_tratado or modal_tratado
 
     def _resumo_pagamento_visivel(self, timeout: int = 2) -> bool:
         try:
@@ -3725,7 +4096,10 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
     @staticmethod
     def _falha_limite_cliques(exc: Exception, *descricoes: str) -> bool:
         texto = str(exc)
-        return any(f"Nao foi possivel clicar em {descricao} apos 3 tentativas" in texto for descricao in descricoes)
+        return any(
+            f"Nao foi possivel clicar em {descricao} apos {CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas" in texto
+            for descricao in descricoes
+        )
 
     def _encontrar_botao_avancar_fluxo_edicao(self):
         driver = self.__dict__.get("driver")
@@ -3758,10 +4132,14 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 self._safe_click(fallback_xpath, "Avancar do fluxo da edicao", timeout=15)
             except Exception as click_exc:
                 raise CoralNavigationAbortError(
-                    f"Falha critica ao clicar em Avancar do fluxo da edicao apos 3 tentativas locais: {click_exc}"
+                    "Falha critica ao clicar em Avancar do fluxo da edicao "
+                    f"apos {CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas locais: {click_exc}"
                 ) from click_exc
 
-    def _avancar_fluxo_edicao_ate_resumo_pagamento(self, max_tentativas: int = 4) -> None:
+    def _avancar_fluxo_edicao_ate_resumo_pagamento(
+        self,
+        max_tentativas: int = CORAL_LOCAL_ACTION_MAX_ATTEMPTS,
+    ) -> None:
         if self._resumo_pagamento_visivel(timeout=2):
             self._log("Resumo Pagamento ja esta visivel.")
             return
@@ -3774,7 +4152,11 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         ]
         for tentativa, xpath_avancar in enumerate(sequencia_avancar[:max_tentativas], start=1):
             self._log(f"Avancando fluxo da edicao ate Pagamentos ({tentativa}/{max_tentativas})...")
+            if self._tratar_modais_edicao_se_visiveis(timeout=1, permitir_fechar_modal=False):
+                self._log("Popup/modal tratado antes de Avancar.")
             self._clicar_avancar_fluxo_edicao(xpath_avancar, tentativa)
+            if self._tratar_modais_edicao_se_visiveis(timeout=2, permitir_fechar_modal=False):
+                self._log("Popup/modal tratado apos Avancar.")
             self._raise_if_toast_critico_edicao(f"avancar fluxo da edicao ({tentativa}/{max_tentativas})")
             if self._resumo_pagamento_visivel(timeout=5):
                 self._log("Resumo Pagamento validado apos Avancar.")
@@ -3785,8 +4167,8 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
     def _acessar_aba_pagamentos_seguro(self, alvo_xpath: str, alvo_descricao: str) -> None:
         erros = []
         popup_tratado_anteriormente = bool(self.__dict__.get("popup_edicao_tratado", False))
-        popup_tratado = popup_tratado_anteriormente or self._click_popup_sim_if_visible(timeout=3)
-        modal_tratado = self._fechar_modal_carregar_cliente_se_visivel(timeout=2)
+        popup_tratado = popup_tratado_anteriormente
+        modal_tratado = self._tratar_modais_edicao_se_visiveis(timeout=3)
         if popup_tratado or modal_tratado:
             try:
                 self._log("Popup/modal tratado. Usando caminho secundario ate Pagamentos.")
@@ -3818,7 +4200,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             self._log(f"Rota rapida para Pagamentos falhou: {exc}")
             if self._falha_limite_cliques(exc, "aba Pagamentos"):
                 raise CoralNavigationAbortError(
-                    f"Falha critica ao clicar em aba Pagamentos apos 3 tentativas locais: {exc}"
+                    f"Falha critica ao clicar em aba Pagamentos apos {CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas locais: {exc}"
                 ) from exc
 
         try:
@@ -3840,7 +4222,8 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             erros.append(f"refresh: {exc}")
             if self._falha_limite_cliques(exc, "aba Pagamentos apos refresh"):
                 raise CoralNavigationAbortError(
-                    f"Falha critica ao clicar em aba Pagamentos apos refresh depois de 3 tentativas locais: {exc}"
+                    "Falha critica ao clicar em aba Pagamentos apos refresh depois de "
+                    f"{CORAL_LOCAL_ACTION_MAX_ATTEMPTS} tentativas locais: {exc}"
                 ) from exc
         raise RuntimeError("Falha nas rotas locais para Pagamentos: " + " | ".join(erros))
 
@@ -3900,7 +4283,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             return ""
         return ""
 
-    def _copiar_link_gerado(self, tentativas: int = 3) -> str:
+    def _copiar_link_gerado(self, tentativas: int = CORAL_LOCAL_ACTION_MAX_ATTEMPTS) -> str:
         for tentativa in range(1, tentativas + 1):
             link_modal = self._ler_link_gerado_no_modal()
             if link_modal:
@@ -4151,19 +4534,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             self._log("Base operacional ainda nao localizada no carregamento inicial.")
             return
         self._log(f"Atualizacao automatica da fila usando planilha: {resolved_path}")
-        try:
-            sincronizados = sincronizar_eventos_processamento_json(resolved_path).get("eventos_sincronizados", 0)
-            if sincronizados:
-                self._log(f"Pendencias JSON do dia aplicadas antes de carregar a fila: {sincronizados} evento(s).")
-        except Exception as exc:
-            self._log(f"Nao foi possivel aplicar pendencias JSON antes de carregar a fila: {exc}")
-        try:
-            recentes = contar_pendencias_processamento_recentes(resolved_path)
-            antigos = {dia: qtd for dia, qtd in recentes.items() if dia != date.today().isoformat()}
-            if antigos:
-                self._log(f"Pendencias JSON antigas encontradas e nao aplicadas automaticamente: {antigos}")
-        except Exception as exc:
-            self._log(f"Nao foi possivel verificar pendencias JSON recentes: {exc}")
+        self._sync_recent_processing_events_for_queue(resolved_path, "carregar a fila")
         try:
             canais = carregar_canais_cobranca_excel(resolved_path)
             resumo = carregar_resumo_cobrancas_excel(resolved_path, canal=canal)
@@ -4172,6 +4543,36 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             return
         self.after(0, self._apply_canais_cobranca, canais)
         self.after(0, self._apply_queue_summary, resolved_path, resumo)
+
+    def _sync_recent_processing_events_for_queue(self, workbook_path: Path, contexto: str) -> None:
+        try:
+            recentes = contar_pendencias_processamento_recentes(workbook_path, dias=2)
+        except Exception as exc:
+            self._log(f"Nao foi possivel verificar pendencias JSON recentes antes de {contexto}: {exc}")
+            return
+
+        if not recentes:
+            return
+
+        for dia in sorted(recentes):
+            try:
+                data_ref = date.fromisoformat(dia)
+            except ValueError:
+                self._log(f"Data de pendencia JSON invalida ignorada antes de {contexto}: {dia}")
+                continue
+            try:
+                resultado = sincronizar_eventos_processamento_json(workbook_path, data_ref=data_ref)
+            except Exception as exc:
+                self._log(f"Nao foi possivel aplicar pendencias JSON de {dia} antes de {contexto}: {exc}")
+                continue
+
+            sincronizados = resultado.get("eventos_sincronizados", 0)
+            if sincronizados:
+                self._log(
+                    f"Pendencias JSON de {dia} aplicadas antes de {contexto}: {sincronizados} evento(s), "
+                    f"{resultado.get('clientes_atualizados', 0)} cliente(s), "
+                    f"{resultado.get('contratos_atualizados', 0)} contrato(s)."
+                )
 
     def _execution_limit(self) -> int:
         raw = self.execution_limit_var.get().strip()
@@ -4245,11 +4646,12 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         self.processing_thread.start()
 
     def _sync_processing_events_safe(self, workbook_path: Path, motivo: str) -> None:
-        json_path = _processing_event_paths(workbook_path, date.today())[0]
+        data_ref = self._processing_data_ref()
+        json_path = _processing_event_paths(workbook_path, data_ref)[0]
         self._log(f"Sincronizacao JSON ({motivo}). Planilha alvo: {workbook_path}")
         self._log(f"Arquivo JSON do dia: {json_path}")
         try:
-            resultado = sincronizar_eventos_processamento_json(workbook_path)
+            resultado = sincronizar_eventos_processamento_json(workbook_path, data_ref=data_ref)
         except Exception as exc:
             self._log(f"Falha ao atualizar planilha no {motivo}. Eventos permanecem no JSON: {exc}")
             return
@@ -4318,12 +4720,14 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                             "registrar_link": bool(contexto_envio["link_gerado_nesta_execucao"]),
                             "usuario": self.coral_user_var.get().strip(),
                         }
-                        event_id = _deterministic_processing_event_id("EMAIL_D0_ENVIADO", payload_evento, datetime.now())
+                        processed_at = self._processing_event_datetime()
+                        event_id = _deterministic_processing_event_id(EVENT_EMAIL_D0_ENVIADO, payload_evento, processed_at)
                         payload_evento["id_evento"] = event_id
                         json_path = registrar_evento_processamento_json(
                             workbook_path,
-                            tipo="EMAIL_D0_ENVIADO",
+                            tipo=EVENT_EMAIL_D0_ENVIADO,
                             payload=payload_evento,
+                            processed_at=processed_at,
                         )
                         self._log(
                             f"Outlook confirmou o envio para {email.destinatario}. "
@@ -4354,6 +4758,67 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         finally:
             self._finish_processing_control()
             self.after(0, self._refresh_queue)
+
+    def _process_campaign_card(self) -> None:
+        if self.processing_thread is not None and self.processing_thread.is_alive():
+            messagebox.showinfo("Campanha", "Ja existe um processamento em andamento.")
+            return
+        conta_envio = self.outlook_account_var.get().strip()
+        if not conta_envio:
+            messagebox.showwarning("Conta Outlook", "Informe a conta de envio antes de processar a campanha.")
+            return
+        if not self.coral_user_var.get().strip() or not self.coral_password_var.get().strip():
+            messagebox.showwarning("Coral", "Informe usuario e senha do Coral antes de processar a campanha.")
+            return
+        self._persist_interface_config()
+
+        path = self.file_path_var.get().strip() or DEFAULT_EXCEL_URL
+        resolved_path = resolver_caminho_excel_compartilhado(path)
+        if resolved_path is None:
+            message = "Nao encontrei a base operacional sincronizada. Confirme a sincronizacao da pasta no OneDrive."
+            self.status_var.set(message)
+            self._log(message)
+            messagebox.showwarning("Base nao encontrada", message)
+            return
+
+        try:
+            limite = self._execution_limit()
+            canal = self._selected_canal()
+            campanha = preparar_campanha_cartao_excel(resolved_path, limite_clientes=limite, canal=canal)
+        except Exception as exc:
+            self.status_var.set(str(exc))
+            self._log(f"Erro ao preparar campanha: {exc}")
+            messagebox.showerror("Erro ao preparar campanha", str(exc))
+            return
+
+        if not campanha.emails and not campanha.contratos:
+            message = "Nenhum cliente com link D0 anterior apto para campanha no canal selecionado."
+            self.status_var.set(message)
+            self._log(message)
+            messagebox.showinfo("Campanha", message)
+            return
+
+        if not messagebox.askyesno(
+            "Confirmar campanha",
+            (
+                f"Executar campanha para {len(campanha.emails)} e-mail(s) novo(s) e {len(campanha.contratos)} contrato(s)?\n\n"
+                f"1) Enviar e-mails sem link pela conta {conta_envio}, quando ainda nao enviados.\n"
+                "2) Cobrar no cartao contrato por contrato pelo valor de cada contrato.\n\n"
+                f"Clientes com link D0 anterior: {campanha.clientes_com_link}\n"
+                f"Clientes com e-mail anterior: {len(campanha.clientes_email_previo)}\n"
+                "Clientes sem link D0 anterior: nao serao processados\n"
+                f"Canal: {canal}"
+            ),
+        ):
+            return
+
+        self._start_processing_control(resolved_path)
+        self.processing_thread = threading.Thread(
+            target=self._run_campaign_card_processing,
+            args=(resolved_path, campanha, conta_envio),
+            daemon=True,
+        )
+        self.processing_thread.start()
 
     def _process_d2(self) -> None:
         if self.processing_thread is not None and self.processing_thread.is_alive():
@@ -4404,7 +4869,108 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         )
         self.processing_thread.start()
 
-    def _run_d2_processing(self, workbook_path: Path, contratos: list[ContratoD2Pedagio]) -> None:
+    def _run_campaign_card_processing(
+        self,
+        workbook_path: Path,
+        campanha: CampanhaCartaoPedagios,
+        conta_envio: str,
+    ) -> None:
+        sucessos_email = 0
+        falhas_email = 0
+        clientes_com_email_enviado: set[str] = set()
+        eventos_desde_sync = 0
+        try:
+            total = len(campanha.emails)
+            self._log(
+                f"Campanha iniciada: {total} cliente(s), {len(campanha.contratos)} contrato(s). "
+                "Tempo 1: envio de e-mails sem link."
+            )
+            for index, email in enumerate(campanha.emails, start=1):
+                if not self._wait_if_paused_or_stopped(workbook_path, f"campanha e-mail {index}/{total}"):
+                    break
+                self._set_status(f"Campanha e-mail {index}/{total}: {email.nome}")
+                try:
+                    criar_email_outlook(
+                        email,
+                        conta_envio=conta_envio,
+                        log_callback=self._log,
+                        exigir_link=False,
+                    )
+                    payload_evento = {
+                        "email": _email_d0_to_dict(email),
+                        "conta_envio": conta_envio,
+                        "registrar_link": False,
+                        "usuario": self.coral_user_var.get().strip(),
+                        "campanha_cartao": True,
+                    }
+                    processed_at = self._processing_event_datetime()
+                    event_id = _deterministic_processing_event_id(EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO, payload_evento, processed_at)
+                    payload_evento["id_evento"] = event_id
+                    json_path = registrar_evento_processamento_json(
+                        workbook_path,
+                        tipo=EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO,
+                        payload=payload_evento,
+                        processed_at=processed_at,
+                    )
+                    clientes_com_email_enviado.add(email.id_cliente)
+                    sucessos_email += 1
+                    eventos_desde_sync += 1
+                    self._log(
+                        f"Campanha: e-mail enviado para {email.destinatario}. "
+                        f"Registro salvo no JSON: {json_path} | id_evento={event_id}."
+                    )
+                    if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
+                        self._sync_processing_events_safe(
+                            workbook_path,
+                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} e-mails da campanha",
+                        )
+                        eventos_desde_sync = 0
+                except Exception as exc:
+                    falhas_email += 1
+                    self._log(f"Falha no e-mail da campanha para {email.destinatario}: {exc}")
+
+            self._sync_processing_events_safe(workbook_path, "fechamento dos e-mails da campanha")
+            clientes_liberados_cartao = clientes_com_email_enviado | set(campanha.clientes_email_previo)
+            contratos_para_cobrar = [
+                contrato for contrato in campanha.contratos if contrato.id_cliente in clientes_liberados_cartao
+            ]
+            self._log(
+                f"Tempo 1 concluido. E-mails enviados={sucessos_email}; falhas={falhas_email}. "
+                f"Clientes com e-mail anterior={len(campanha.clientes_email_previo)}. "
+                f"Tempo 2: {len(contratos_para_cobrar)} contrato(s) seguiram para cobranca no cartao."
+            )
+            if not contratos_para_cobrar:
+                self._set_status("Campanha concluida sem contratos para cobrar apos o envio dos e-mails.")
+                return
+            if not self._wait_if_paused_or_stopped(workbook_path, "campanha antes da cobranca no cartao"):
+                return
+            self._run_d2_processing(
+                workbook_path,
+                contratos_para_cobrar,
+                gerar_link_residual=False,
+                stage_label="Campanha cartao",
+                finalizar_controles=False,
+            )
+            self._set_status(
+                f"Campanha concluida. E-mails enviados: {sucessos_email} | Falhas e-mail: {falhas_email}"
+            )
+        except Exception as exc:
+            self._set_status(f"Erro na campanha: {exc}")
+            self._log(f"Erro geral na campanha: {exc}")
+            self.after(0, lambda error=str(exc): messagebox.showerror("Erro campanha", error))
+        finally:
+            self._finish_processing_control()
+            self.after(0, self._refresh_queue)
+
+    def _run_d2_processing(
+        self,
+        workbook_path: Path,
+        contratos: list[ContratoD2Pedagio],
+        *,
+        gerar_link_residual: bool = True,
+        stage_label: str = "D0+2",
+        finalizar_controles: bool = True,
+    ) -> None:
         cobrados = 0
         links_gerados = 0
         link_pendente = 0
@@ -4421,22 +4987,22 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             for cliente_index, (id_cliente, contratos_cliente) in enumerate(contratos_por_cliente.items(), start=1):
                 if not self._wait_if_paused_or_stopped(
                     workbook_path,
-                    f"D0+2 cliente {cliente_index}/{len(contratos_por_cliente)}",
+                    f"{stage_label} cliente {cliente_index}/{len(contratos_por_cliente)}",
                 ):
                     break
                 cliente_nome = contratos_cliente[0].cliente if contratos_cliente else id_cliente
                 self._log(
-                    f"[D0+2 cliente {cliente_index}/{len(contratos_por_cliente)}] "
+                    f"[{stage_label} cliente {cliente_index}/{len(contratos_por_cliente)}] "
                     f"{cliente_nome} | {len(contratos_cliente)} contrato(s)."
                 )
                 resultados_cliente: list[ResultadoD2Pedagio] = []
                 for contrato in contratos_cliente:
                     index_global += 1
-                    if not self._wait_if_paused_or_stopped(workbook_path, f"D0+2 contrato {index_global}/{total}"):
+                    if not self._wait_if_paused_or_stopped(workbook_path, f"{stage_label} contrato {index_global}/{total}"):
                         break
-                    self._set_status(f"D0+2 {index_global}/{total}: {contrato.contrato}")
+                    self._set_status(f"{stage_label} {index_global}/{total}: {contrato.contrato}")
                     self._log(
-                        f"[D0+2 {index_global}/{total}] Contrato {contrato.contrato} | Cliente {contrato.cliente} | "
+                        f"[{stage_label} {index_global}/{total}] Contrato {contrato.contrato} | Cliente {contrato.cliente} | "
                         f"Valor R$ {_format_brl(contrato.valor)}"
                     )
                     try:
@@ -4455,17 +5021,25 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                             str(exc),
                         )
                         self._log(f"Erro D0+2 no contrato {contrato.contrato}: {exc}")
+                    if not gerar_link_residual and _status_planilha_d2(resultado.status) == "LINK_PAGAMENTO_PENDENTE":
+                        resultado = replace(
+                            resultado,
+                            status="CARTAO_RECUSADO_SEM_LINK",
+                            detalhe=f"{resultado.detalhe} Sem geracao de link na campanha.",
+                        )
 
                     payload_evento = {
                         "resultado": _resultado_d2_to_dict(resultado),
                         "usuario": self.coral_user_var.get().strip(),
                     }
-                    event_id = _deterministic_processing_event_id("RESULTADO_D2", payload_evento, datetime.now())
+                    processed_at = self._processing_event_datetime()
+                    event_id = _deterministic_processing_event_id("RESULTADO_D2", payload_evento, processed_at)
                     payload_evento["id_evento"] = event_id
                     json_path = registrar_evento_processamento_json(
                         workbook_path,
                         tipo="RESULTADO_D2",
                         payload=payload_evento,
+                        processed_at=processed_at,
                     )
                     resultados_cliente.append(resultado)
                     status_planilha = _status_planilha_d2(resultado.status)
@@ -4476,7 +5050,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     else:
                         erros += 1
                     self._log(
-                        f"Resultado D0+2 salvo no JSON: {resultado.contrato} | {status_planilha} | "
+                        f"Resultado {stage_label} salvo no JSON: {resultado.contrato} | {status_planilha} | "
                         f"cartoes {resultado.cartoes_tentados}/{resultado.cartoes_encontrados} | "
                         f"{json_path} | id_evento={event_id}"
                     )
@@ -4484,7 +5058,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
                         self._sync_processing_events_safe(
                             workbook_path,
-                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} eventos D0+2",
+                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} eventos {stage_label}",
                         )
                         eventos_desde_sync = 0
 
@@ -4495,7 +5069,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     if _status_planilha_d2(resultado.status) == "LINK_PAGAMENTO_PENDENTE"
                     and resultado.contrato in contratos_por_numero
                 ]
-                if not residuais:
+                if not residuais or not gerar_link_residual:
                     continue
                 if not self._wait_if_paused_or_stopped(workbook_path, f"link residual de {cliente_nome}"):
                     break
@@ -4523,12 +5097,14 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                             "contrato_referencia_link": residuais[-1].contrato,
                             "usuario": self.coral_user_var.get().strip(),
                         }
-                        event_id = _deterministic_processing_event_id("LINK_D2_GERADO", payload_evento, datetime.now())
+                        processed_at = self._processing_event_datetime()
+                        event_id = _deterministic_processing_event_id("LINK_D2_GERADO", payload_evento, processed_at)
                         payload_evento["id_evento"] = event_id
                         json_path = registrar_evento_processamento_json(
                             workbook_path,
                             tipo="LINK_D2_GERADO",
                             payload=payload_evento,
+                            processed_at=processed_at,
                         )
                         return contexto_link["link_pagamento"], json_path, event_id
 
@@ -4554,22 +5130,23 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     erros += 1
                     self._log(f"Falha ao gerar link residual para {cliente_nome}: {exc}")
 
-            self._sync_processing_events_safe(workbook_path, "fechamento D0+2")
+            self._sync_processing_events_safe(workbook_path, f"fechamento {stage_label}")
             self._set_status(
-                f"D0+2 concluido. Cobrados: {cobrados} | Links gerados: {links_gerados} | "
+                f"{stage_label} concluido. Cobrados: {cobrados} | Links gerados: {links_gerados} | "
                 f"Links pendentes: {link_pendente} | Erros: {erros}"
             )
             self._log(
-                f"D0+2 finalizado. Cobrados={cobrados}; links_gerados={links_gerados}; "
+                f"{stage_label} finalizado. Cobrados={cobrados}; links_gerados={links_gerados}; "
                 f"links_pendentes={link_pendente}; erros={erros}."
             )
         except Exception as exc:
-            self._set_status(f"Erro no D0+2: {exc}")
-            self._log(f"Erro geral no D0+2: {exc}")
+            self._set_status(f"Erro no {stage_label}: {exc}")
+            self._log(f"Erro geral no {stage_label}: {exc}")
             self.after(0, lambda error=str(exc): messagebox.showerror("Erro etapa 2", error))
         finally:
-            self._finish_processing_control()
-            self.after(0, self._refresh_queue)
+            if finalizar_controles:
+                self._finish_processing_control()
+                self.after(0, self._refresh_queue)
 
     def _refresh_queue(self) -> None:
         path = self.file_path_var.get().strip()
@@ -4599,19 +5176,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             self._log(f"Link resolvido para arquivo local: {resolved_path}")
 
         self._log(f"Atualizacao manual da fila usando planilha: {resolved_path}")
-        try:
-            sincronizados = sincronizar_eventos_processamento_json(resolved_path).get("eventos_sincronizados", 0)
-            if sincronizados:
-                self._log(f"Pendencias JSON do dia aplicadas antes de atualizar a fila: {sincronizados} evento(s).")
-        except Exception as exc:
-            self._log(f"Nao foi possivel aplicar pendencias JSON antes de atualizar a fila: {exc}")
-        try:
-            recentes = contar_pendencias_processamento_recentes(resolved_path)
-            antigos = {dia: qtd for dia, qtd in recentes.items() if dia != date.today().isoformat()}
-            if antigos:
-                self._log(f"Pendencias JSON antigas encontradas e nao aplicadas automaticamente: {antigos}")
-        except Exception as exc:
-            self._log(f"Nao foi possivel verificar pendencias JSON recentes: {exc}")
+        self._sync_recent_processing_events_for_queue(resolved_path, "atualizar a fila")
 
         try:
             canais = carregar_canais_cobranca_excel(resolved_path)

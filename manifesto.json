@@ -13,7 +13,7 @@
   "contratos": {
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
-    "versao": "1.1.4"
+    "versao": "1.1.2"
   },
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
@@ -54,13 +54,13 @@
   "cobcloud_baixa_pagamentos": {
     "arquivo": "robo_cobcloud_baixa_pagamentos_v1.py",
     "classe": "RoboCobCloudBaixaPagamentosApp",
-    "versao": "1.0.0",
+    "versao": "1.1.14",
     "constructor_mode": "external_process",
-    "title": "Robo CobCloud - Baixa de Pagamentos",
+    "title": "Robo CobCloud - Conciliacao de Cartao",
     "geometry": "1040x760",
     "resizable": true,
-    "card_title": "Baixa de Pagamentos",
-    "description": "Lancamento e baixa de recebimentos no CobCloud, com retorno de boletos bancarios.",
+    "card_title": "Conciliacao Cartao",
+    "description": "Concilia no CobCloud contratos com STATUS vazio e gera relatorio Excel.",
     "tutorial_file": "tutorial_cobcloud_baixa_pagamentos.txt",
     "show_support_buttons": true,
     "show_model_button": false,
@@ -69,7 +69,7 @@
   "cobranca_pedagios": {
     "arquivo": "robo_cobranca_pedagios_v1.py",
     "classe": "RoboCobrancaPedagiosApp",
-    "versao": "1.0.18",
+    "versao": "1.0.20",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Pedagios",
     "geometry": "1180x780",
@@ -95,7 +95,7 @@
   "lancamentos_caixa": {
     "arquivo": "robo_lancamentos_caixa_v1.py",
     "classe": "RoboLancamentosCaixaApp",
-    "versao": "1.0.4",
+    "versao": "1.0.5",
     "constructor_mode": "external_process",
     "title": "Robo de Lancamentos de Caixa",
     "geometry": "1180x780",
@@ -107,7 +107,7 @@
   "cash_coral_portal": {
     "arquivo": "robo_cash_coral_portal_v1.py",
     "classe": "RoboCashCoralPortalApp",
-    "versao": "1.0.2",
+    "versao": "1.0.0",
     "constructor_mode": "external_process",
     "title": "Atualizar Cash Coral",
     "geometry": "760x640",
@@ -119,3 +119,5 @@
     "show_model_button": false
   }
 }
+
+
