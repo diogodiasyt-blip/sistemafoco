@@ -78,7 +78,8 @@
     "description": "Regua de cobranca de pedagios por e-mail, link e tentativa de cartao no Coral.",
     "tutorial_file": "tutorial_cobranca_pedagios.txt",
     "show_support_buttons": true,
-    "show_model_button": false
+    "show_model_button": false,
+    "allow_multiple_instances": true
   },
   "relatorio_coral": {
     "arquivo": "robo_relatorio_coral_v1.py",
