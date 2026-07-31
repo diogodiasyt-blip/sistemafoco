@@ -4890,11 +4890,23 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     break
                 self._set_status(f"Campanha e-mail {index}/{total}: {email.nome}")
                 try:
+                    anexos_email: list[Path] = []
+                    try:
+                        pdf_relatorio = gerar_pdf_relatorio_pedagios_para_email(email)
+                        anexos_email.append(pdf_relatorio)
+                        self._log(f"Campanha: relatorio de pedagios anexado para {email.nome}: {pdf_relatorio}")
+                    except Exception as exc:
+                        self._log(
+                            f"Campanha: nao foi possivel gerar/anexar relatorio de pedagios "
+                            f"para {email.nome}: {exc}"
+                        )
+
                     criar_email_outlook(
                         email,
                         conta_envio=conta_envio,
                         log_callback=self._log,
                         exigir_link=False,
+                        anexos=anexos_email,
                     )
                     payload_evento = {
                         "email": _email_d0_to_dict(email),
