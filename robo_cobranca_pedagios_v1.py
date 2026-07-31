@@ -4890,15 +4890,17 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     break
                 self._set_status(f"Campanha e-mail {index}/{total}: {email.nome}")
                 try:
+                    pdf_relatorio: Path | None = None
                     anexos_email: list[Path] = []
                     try:
+                        self._log(f"Campanha: tentando gerar relatorio de pedagios para {email.nome}.")
                         pdf_relatorio = gerar_pdf_relatorio_pedagios_para_email(email)
                         anexos_email.append(pdf_relatorio)
                         self._log(f"Campanha: relatorio de pedagios anexado para {email.nome}: {pdf_relatorio}")
                     except Exception as exc:
                         self._log(
                             f"Campanha: nao foi possivel gerar/anexar relatorio de pedagios "
-                            f"para {email.nome}: {exc}"
+                            f"para {email.nome}. E-mail seguira sem PDF. Erro: {exc}"
                         )
 
                     criar_email_outlook(
@@ -4914,6 +4916,8 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         "registrar_link": False,
                         "usuario": self.coral_user_var.get().strip(),
                         "campanha_cartao": True,
+                        "pdf_relatorio": str(pdf_relatorio) if pdf_relatorio else "",
+                        "pdf_anexado": bool(anexos_email),
                     }
                     processed_at = self._processing_event_datetime()
                     event_id = _deterministic_processing_event_id(EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO, payload_evento, processed_at)
