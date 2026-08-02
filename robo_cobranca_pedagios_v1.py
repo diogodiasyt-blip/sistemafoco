@@ -9,6 +9,7 @@ import threading
 import time
 import unicodedata
 import html
+import uuid
 from dataclasses import dataclass, field, replace
 from datetime import date
 from datetime import datetime
@@ -2153,9 +2154,9 @@ def _preparar_assinatura_outlook(
         cache_root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SistemaFOCO" / "cache"
     cache_path = Path(cache_root)
     cache_path.mkdir(parents=True, exist_ok=True)
-    destino = cache_path / SIGNATURE_IMAGE_FILENAME
-    if not destino.exists() or destino.stat().st_size != origem_path.stat().st_size:
-        shutil.copy2(origem_path, destino)
+    signature_name = Path(SIGNATURE_IMAGE_FILENAME)
+    destino = cache_path / f"{signature_name.stem}_{uuid.uuid4().hex}{signature_name.suffix}"
+    shutil.copy2(origem_path, destino)
     return destino
 
 
@@ -2276,6 +2277,7 @@ def criar_email_outlook(
 
     pythoncom = _inicializar_com_outlook()
     etapa = time.perf_counter()
+    assinatura_local: Path | None = None
     try:
         outlook = _outlook_app()
         outlook.GetNamespace("MAPI")
@@ -2312,6 +2314,12 @@ def criar_email_outlook(
             log_callback("Outlook: verificacao pos-envio desativada para este robo.")
         return "enviado"
     finally:
+        if assinatura_local is not None:
+            try:
+                assinatura_local.unlink(missing_ok=True)
+            except OSError as exc:
+                if log_callback is not None:
+                    log_callback(f"Outlook: nao foi possivel limpar assinatura temporaria: {exc}")
         pythoncom.CoUninitialize()
 
 
