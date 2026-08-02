@@ -24,12 +24,10 @@ from openpyxl import load_workbook
 from PIL import Image
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_TITLE = "Robo de Cobranca de Pedagios"
@@ -3731,7 +3729,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             "Criando sessao do Chrome para o Coral"
             + (" em modo invisivel..." if coral_headless else "...")
         )
-        return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        return webdriver.Chrome(options=options)
 
     def _wait_clickable(self, xpath: str, description: str, timeout: int = 30):
         self._log(f"Aguardando {description} ficar disponivel...")
