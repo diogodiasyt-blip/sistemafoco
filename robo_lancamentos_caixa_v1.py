@@ -474,6 +474,7 @@ def _style_rateio_sheet(sheet, total_rows: int) -> None:
 def _cache_rateio_formula_values(
     workbook_path: Path,
     percentages: list[float],
+    amounts: list[float],
     total_value: float,
 ) -> None:
     namespace = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -487,6 +488,7 @@ def _cache_rateio_formula_values(
                 root = ElementTree.fromstring(content)
                 cached_values = {
                     **{f"C{index}": value for index, value in enumerate(percentages, start=2)},
+                    **{f"D{index}": value for index, value in enumerate(amounts, start=2)},
                     "K2": total_value,
                 }
                 for cell in root.findall(f".//{{{namespace}}}c"):
@@ -510,13 +512,15 @@ def _save_rateio_workbooks(output_dir: Path, rows_by_store: dict[str, list[list]
         sheet = workbook.active
         sheet.title = "Plan1"
         sheet.append(RATEIO_HEADERS)
-        total_value = round(sum(float(row[3] or 0) for row in rows), 2)
+        amounts = [round(float(row[3] or 0), 2) for row in rows]
+        total_value = round(sum(amounts), 2)
         percentages = [
-            float(row[3] or 0) / total_value * 100 if total_value else 0.0
-            for row in rows
+            amount / total_value * 100 if total_value else 0.0
+            for amount in amounts
         ]
-        for index, row in enumerate(rows, start=2):
+        for index, (row, amount) in enumerate(zip(rows, amounts), start=2):
             row[2] = f"=D{index}/$K$2*100"
+            row[3] = f"={int(round(amount * 100))}/100"
             sheet.append(row)
             sheet.cell(row=index, column=1).value = str(row[0]) if row[0] else None
             sheet.cell(row=index, column=1).number_format = "@"
@@ -524,7 +528,7 @@ def _save_rateio_workbooks(output_dir: Path, rows_by_store: dict[str, list[list]
         sheet["K2"] = "=SUM(D:D)"
         output_path = output_dir / f"{_safe_filename_part(loja)} - RATEIO.xlsx"
         workbook.save(output_path)
-        _cache_rateio_formula_values(output_path, percentages, total_value)
+        _cache_rateio_formula_values(output_path, percentages, amounts, total_value)
         rateio_files.append(output_path)
     return rateio_files
 
