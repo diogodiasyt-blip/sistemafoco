@@ -69,7 +69,7 @@
   "cobranca_pedagios": {
     "arquivo": "robo_cobranca_pedagios_v1.py",
     "classe": "RoboCobrancaPedagiosApp",
-    "versao": "1.0.25",
+    "versao": "1.0.23",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Pedagios",
     "geometry": "1180x780",
@@ -96,7 +96,7 @@
   "lancamentos_caixa": {
     "arquivo": "robo_lancamentos_caixa_v1.py",
     "classe": "RoboLancamentosCaixaApp",
-    "versao": "1.0.5",
+    "versao": "1.0.6",
     "constructor_mode": "external_process",
     "title": "Robo de Lancamentos de Caixa",
     "geometry": "1180x780",

@@ -512,18 +512,16 @@ def _save_rateio_workbooks(output_dir: Path, rows_by_store: dict[str, list[list]
         sheet.append(RATEIO_HEADERS)
         total_value = round(sum(float(row[3] or 0) for row in rows), 2)
         percentages = [
-            round(float(row[3] or 0) / total_value * 100, 2) if total_value else 0.0
+            float(row[3] or 0) / total_value * 100 if total_value else 0.0
             for row in rows
         ]
-        if total_value and percentages:
-            percentages[-1] = round(100.0 - sum(percentages[:-1]), 2)
         for index, row in enumerate(rows, start=2):
-            row[2] = f"=ROUND(D{index}/$K$2*100,2)"
+            row[2] = f"=D{index}/$K$2*100"
             sheet.append(row)
             sheet.cell(row=index, column=1).value = str(row[0]) if row[0] else None
             sheet.cell(row=index, column=1).number_format = "@"
         _style_rateio_sheet(sheet, len(rows))
-        sheet["K2"] = "=ROUND(SUM(D:D),2)"
+        sheet["K2"] = "=SUM(D:D)"
         output_path = output_dir / f"{_safe_filename_part(loja)} - RATEIO.xlsx"
         workbook.save(output_path)
         _cache_rateio_formula_values(output_path, percentages, total_value)
