@@ -74,6 +74,7 @@ CORAL_API_LOGIN_URL = f"{CORAL_API_BASE_URL}/api/auth/login"
 CORAL_API_RENT_AGREEMENT_URL = f"{CORAL_API_BASE_URL}/api/rentagreement"
 CORAL_API_TOKENS_URL = f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/tokens"
 CORAL_API_WALLET_PAYMENT_URL = f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/wallet-payment"
+CORAL_API_PAY_BY_LINK_CREATE_URL = f"{CORAL_API_BASE_URL}/api/adyen-pay-by-link/v2/create"
 CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "45"))
 # Passphrase usada pelo frontend do Coral; pode ser sobrescrita sem alterar o código.
 CORAL_WALLET_ENCODE = os.environ.get("CORAL_WALLET_ENCODE", "7HjWayV1f0")
@@ -83,6 +84,8 @@ PENDING_D0_SYNCED_FILENAME = "pendencias_d0_sincronizadas.jsonl"
 PROCESSING_EVENTS_PREFIX = "registros_processamento"
 PROCESSING_EVENTS_SYNCED_PREFIX = "registros_processamento_sincronizados"
 PROCESSING_SYNC_BATCH_SIZE = 50
+EMAIL_PROCESSING_SYNC_BATCH_SIZE = 1000
+CARD_CAMPAIGN_SYNC_BATCH_SIZE = 200
 CORAL_OPERATION_MAX_ATTEMPTS = 2
 CORAL_LOCAL_ACTION_MAX_ATTEMPTS = 2
 DEFAULT_CORAL_HEADLESS = True
@@ -144,6 +147,7 @@ ACTION_RULES = {
 ACTION_KEY_BY_LABEL = {label: key for key, label in ACTION_LABELS.items()}
 EVENT_EMAIL_D0_ENVIADO = "EMAIL_D0_ENVIADO"
 EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO = "EMAIL_CAMPANHA_CARTAO_ENVIADO"
+EVENT_LINK_D0_CRIADO = "LINK_D0_CRIADO"
 
 URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_DASHBOARD = "https://coral.aluguefoco.com.br/precificacao/dashboard"
@@ -1267,6 +1271,10 @@ def _deterministic_processing_event_id(tipo: str, payload: dict[str, object], pr
         email = payload.get("email")
         email_data = email if isinstance(email, dict) else {}
         return _event_hash([tipo_norm, email_data.get("id_cliente"), email_data.get("link_pagamento")])
+    if tipo_norm == EVENT_LINK_D0_CRIADO:
+        email = payload.get("email")
+        email_data = email if isinstance(email, dict) else {}
+        return _event_hash([tipo_norm, email_data.get("id_cliente"), email_data.get("link_pagamento")])
     if tipo_norm == "RESULTADO_D2":
         resultado = payload.get("resultado")
         resultado_data = resultado if isinstance(resultado, dict) else {}
@@ -1446,6 +1454,7 @@ def sincronizar_eventos_processamento_json(
         return {"eventos_pendentes": 0, "eventos_sincronizados": 0, "clientes_atualizados": 0, "contratos_atualizados": 0}
 
     d0_por_grupo: dict[tuple[str, bool, str, bool], list[EmailD0Pedagio]] = {}
+    d0_links: list[tuple[EmailD0Pedagio, str]] = []
     d2_resultados: list[ResultadoD2Pedagio] = []
     d2_links: list[dict[str, object]] = []
     synced_ids: list[str] = []
@@ -1468,6 +1477,12 @@ def sincronizar_eventos_processamento_json(
             campanha_cartao = tipo == EVENT_EMAIL_CAMPANHA_CARTAO_ENVIADO or bool(payload.get("campanha_cartao"))
             d0_por_grupo.setdefault((conta_envio, registrar_link, usuario, campanha_cartao), []).append(_email_d0_from_dict(email_data))
             synced_ids.append(event_id)
+        elif tipo == EVENT_LINK_D0_CRIADO:
+            email_data = payload.get("email")
+            if not isinstance(email_data, dict):
+                continue
+            d0_links.append((_email_d0_from_dict(email_data), str(payload.get("usuario") or "")))
+            synced_ids.append(event_id)
         elif tipo == "RESULTADO_D2":
             resultado_data = payload.get("resultado")
             if not isinstance(resultado_data, dict):
@@ -1477,6 +1492,17 @@ def sincronizar_eventos_processamento_json(
         elif tipo == "LINK_D2_GERADO":
             d2_links.append(payload)
             synced_ids.append(event_id)
+
+    for email, usuario in d0_links:
+        registrar_link_d0_excel(
+            workbook_path,
+            id_cliente=email.id_cliente,
+            contrato_referencia=email.contrato_referencia,
+            valor_link=email.valor_total,
+            link_pagamento=email.link_pagamento,
+            usuario=usuario,
+        )
+        clientes_atualizados += 1
 
     for (conta_envio, registrar_link, usuario, campanha_cartao), emails in d0_por_grupo.items():
         clientes_atualizados += registrar_processamento_d0_excel(
@@ -2386,7 +2412,9 @@ def criar_email_outlook(
         mail.Send()
         etapa = log_etapa("comando Send concluido", etapa)
         if log_callback is not None:
-            log_callback("Outlook: verificacao pos-envio desativada para este robo.")
+            log_callback(
+                "Outlook: comando aceito pela aplicacao; Caixa de Saida e entrega externa nao sao aguardadas."
+            )
         return "enviado"
     finally:
         if assinatura_local is not None:
@@ -2941,6 +2969,10 @@ def registrar_link_d2_excel(
 
 class CoralNavigationAbortError(RuntimeError):
     """Erro de navegação considerado irrecuperável para a unidade atual."""
+
+
+class CoralNonRetryableOperationError(RuntimeError):
+    """Falha em POST que não pode ser repetido sem risco de duplicar uma operação."""
 
 
 class RoboCobrancaPedagiosApp(ctk.CTk):
@@ -3943,7 +3975,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             raise RuntimeError("Informe usuario e senha do Coral antes de processar a cobranca.")
 
         self._set_status("Autenticando na API do Coral...")
-        self._log(f"Wallet API: autenticando usuario {usuario}.")
+        self._log(f"Coral API: autenticando usuario {usuario}.")
         payload = {"login": usuario, "password": senha}
         response = self._coral_api_json_request(
             "POST",
@@ -3958,7 +3990,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             raise RuntimeError("Login da API do Coral nao retornou data.token.")
         self.coral_api_token = token
         self.coral_api_token_obtained_at = datetime.now()
-        self._log("Wallet API: autenticacao confirmada.")
+        self._log("Coral API: autenticacao confirmada.")
         return token
 
     def _coral_api_json_request(
@@ -3970,6 +4002,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         auth: bool = True,
         retry_auth: bool = True,
         allow_http_error_json: bool = False,
+        extra_headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         if auth and not self.coral_api_token:
             self._login_coral_api(force=False)
@@ -3982,6 +4015,8 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         }
         if auth:
             headers["Authorization"] = f"Bearer {self.coral_api_token}"
+        if extra_headers:
+            headers.update(extra_headers)
 
         request = Request(url, data=body, headers=headers, method=method.upper())
         try:
@@ -4015,6 +4050,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     auth=auth,
                     retry_auth=False,
                     allow_http_error_json=allow_http_error_json,
+                    extra_headers=extra_headers,
                 )
             if allow_http_error_json:
                 return parsed
@@ -4191,6 +4227,71 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             allow_http_error_json=True,
         )
 
+    def _criar_link_pagamento_d0_api(self, email: EmailD0Pedagio) -> str:
+        referencia = str(email.contrato_referencia or "").strip()
+        documento = _digits_only(email.documento)
+        nome = str(email.nome or "").strip()
+        destinatario = str(email.destinatario or "").strip()
+        valor = round(float(email.valor_total), 2)
+        if not referencia:
+            raise ValueError("Contrato de referencia ausente para criar o link D0.")
+        if not documento:
+            raise ValueError(f"Documento ausente para criar o link D0 de {referencia}.")
+        if not nome:
+            raise ValueError(f"Nome do cliente ausente para criar o link D0 de {referencia}.")
+        if not _is_valid_email(destinatario):
+            raise ValueError(f"E-mail invalido para criar o link D0 de {referencia}.")
+        if valor <= 0:
+            raise ValueError(f"Valor do link D0 deve ser maior que zero para {referencia}.")
+
+        payload: dict[str, object] = {
+            "reference": referencia,
+            "amount": {"value": valor},
+            "isPrePayment": False,
+            "isFromApp": False,
+            "isCheckin": False,
+            "documentNumber": documento,
+            "customerName": nome,
+            "customerEmail": destinatario,
+            "dateInRA": _wallet_payment_date_iso(self._processing_data_ref()),
+            "typePayDue": "due",
+        }
+        self._log(
+            f"Pay by Link API: criando link para {referencia}, valor R$ {_format_brl(valor)}, "
+            f"cliente {email.id_cliente}."
+        )
+        try:
+            response = self._coral_api_json_request(
+                "POST",
+                CORAL_API_PAY_BY_LINK_CREATE_URL,
+                payload=payload,
+                extra_headers={
+                    "Origin": "https://coral.aluguefoco.com.br",
+                    "Referer": "https://coral.aluguefoco.com.br/",
+                },
+            )
+        except Exception as exc:
+            raise CoralNonRetryableOperationError(
+                f"Nao foi possivel confirmar a criacao do link para {referencia}. "
+                "O POST nao sera repetido automaticamente para evitar link duplicado. "
+                f"Detalhe: {exc}"
+            ) from exc
+
+        data = response.get("data") if isinstance(response, dict) else None
+        link = str(data.get("link") or "").strip() if isinstance(data, dict) else ""
+        parsed = urlparse(link)
+        if (
+            parsed.scheme.lower() != "https"
+            or parsed.hostname != "livecheckout.aluguefoco.com.br"
+            or not parsed.path.startswith("/checkout/")
+        ):
+            raise CoralNonRetryableOperationError(
+                f"Pay by Link retornou link ausente ou inesperado para {referencia}; "
+                "a chamada nao sera repetida automaticamente."
+            )
+        self._log(f"Pay by Link API: link confirmado para {referencia}.")
+        return link
+
     def _login_coral(self, force_new_driver: bool = True) -> None:
         usuario = self.coral_user_var.get().strip()
         senha = self.coral_password_var.get().strip()
@@ -4256,7 +4357,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         f"{descricao} [{identificador}]."
                     )
                 return operacao()
-            except CoralNavigationAbortError:
+            except (CoralNavigationAbortError, CoralNonRetryableOperationError):
                 raise
             except Exception as exc:
                 ultimo_erro = exc
@@ -5090,7 +5191,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         falhas = 0
         eventos_desde_sync = 0
         try:
-            self._login_coral(force_new_driver=True)
+            self._login_coral_api(force=True)
             total = len(emails)
             for index, email in enumerate(emails, start=1):
                 if not self._wait_if_paused_or_stopped(workbook_path, f"D0 cliente {index}/{total}"):
@@ -5104,20 +5205,50 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     contexto_envio = {
                         "link_pagamento": email.link_pagamento,
                         "link_gerado_nesta_execucao": False,
+                        "link_checkpoint_registrado": False,
                     }
 
                     def processar_cliente_d0():
                         email_pronto = email
                         if contexto_envio["link_pagamento"]:
                             email_pronto = preparar_email_d0_com_link(email, str(contexto_envio["link_pagamento"]))
-                            self._log(f"Reutilizando link D0 ja registrado para {email.nome}.")
+                            if contexto_envio["link_gerado_nesta_execucao"]:
+                                self._log(f"Reutilizando link D0 criado nesta execucao para {email.nome}.")
+                            else:
+                                self._log(f"Reutilizando link D0 ja registrado para {email.nome}.")
                         else:
-                            self._ir_para_pagamentos_para_link(email.contrato_referencia)
-                            link_pagamento = self._gerar_link_pagamento_residual(email.valor_total)
+                            link_pagamento = self._criar_link_pagamento_d0_api(email)
                             contexto_envio["link_pagamento"] = link_pagamento
                             contexto_envio["link_gerado_nesta_execucao"] = True
                             email_pronto = preparar_email_d0_com_link(email, link_pagamento)
-                            self._log(f"Link D0 gerado para {email.nome}: {link_pagamento}")
+                            self._log(f"Link D0 gerado pela API para {email.nome}.")
+
+                        if (
+                            contexto_envio["link_gerado_nesta_execucao"]
+                            and not contexto_envio["link_checkpoint_registrado"]
+                        ):
+                            payload_link = {
+                                "email": _email_d0_to_dict(email_pronto),
+                                "usuario": self.coral_user_var.get().strip(),
+                            }
+                            link_processed_at = self._processing_event_datetime()
+                            link_event_id = _deterministic_processing_event_id(
+                                EVENT_LINK_D0_CRIADO,
+                                payload_link,
+                                link_processed_at,
+                            )
+                            payload_link["id_evento"] = link_event_id
+                            json_link_path = registrar_evento_processamento_json(
+                                workbook_path,
+                                tipo=EVENT_LINK_D0_CRIADO,
+                                payload=payload_link,
+                                processed_at=link_processed_at,
+                            )
+                            contexto_envio["link_checkpoint_registrado"] = True
+                            self._log(
+                                f"Checkpoint do link D0 salvo antes do Outlook: {json_link_path} | "
+                                f"id_evento={link_event_id}."
+                            )
 
                         anexos_email: list[Path] = []
                         try:
@@ -5137,7 +5268,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         payload_evento = {
                             "email": _email_d0_to_dict(email_pronto),
                             "conta_envio": conta_envio,
-                            "registrar_link": bool(contexto_envio["link_gerado_nesta_execucao"]),
+                            "registrar_link": False,
                             "usuario": self.coral_user_var.get().strip(),
                         }
                         processed_at = self._processing_event_datetime()
@@ -5150,17 +5281,17 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                             processed_at=processed_at,
                         )
                         self._log(
-                            f"Outlook confirmou o envio para {email.destinatario}. "
-                            f"Registro salvo no JSON local: {json_path} | id_evento={event_id}."
+                            f"Outlook aceitou o comando de envio para {email.destinatario}. "
+                            f"Checkpoint salvo no JSON local: {json_path} | id_evento={event_id}."
                         )
 
                     self._executar_unidade_com_tentativas(email.id_cliente, "processar etapa 1", processar_cliente_d0)
                     sucessos += 1
                     eventos_desde_sync += 1
-                    if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
+                    if eventos_desde_sync >= EMAIL_PROCESSING_SYNC_BATCH_SIZE:
                         self._sync_processing_events_safe(
                             workbook_path,
-                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} eventos D0",
+                            f"lote de {EMAIL_PROCESSING_SYNC_BATCH_SIZE} eventos D0",
                         )
                         eventos_desde_sync = 0
                     self._log(f"D0 enviado: {email.destinatario}")
@@ -5360,10 +5491,10 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         f"Campanha: e-mail enviado para {email.destinatario}. "
                         f"Registro salvo no JSON: {json_path} | id_evento={event_id}."
                     )
-                    if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
+                    if eventos_desde_sync >= EMAIL_PROCESSING_SYNC_BATCH_SIZE:
                         self._sync_processing_events_safe(
                             workbook_path,
-                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} e-mails da campanha",
+                            f"lote de {EMAIL_PROCESSING_SYNC_BATCH_SIZE} e-mails da campanha",
                         )
                         eventos_desde_sync = 0
                 except Exception as exc:
@@ -5391,6 +5522,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 gerar_link_residual=False,
                 stage_label="Campanha cartao",
                 finalizar_controles=False,
+                sync_batch_size=CARD_CAMPAIGN_SYNC_BATCH_SIZE,
             )
             self._set_status(
                 f"Campanha concluida. E-mails enviados: {sucessos_email} | Falhas e-mail: {falhas_email}"
@@ -5411,6 +5543,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
         gerar_link_residual: bool = True,
         stage_label: str = "D0+2",
         finalizar_controles: bool = True,
+        sync_batch_size: int = PROCESSING_SYNC_BATCH_SIZE,
     ) -> None:
         cobrados = 0
         links_gerados = 0
@@ -5495,10 +5628,10 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         f"{json_path} | id_evento={event_id}"
                     )
                     eventos_desde_sync += 1
-                    if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
+                    if eventos_desde_sync >= sync_batch_size:
                         self._sync_processing_events_safe(
                             workbook_path,
-                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} eventos {stage_label}",
+                            f"lote de {sync_batch_size} eventos {stage_label}",
                         )
                         eventos_desde_sync = 0
 
@@ -5560,10 +5693,10 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         f"R$ {_format_brl(valor_residual)} | {json_path} | id_evento={event_id}"
                     )
                     eventos_desde_sync += 1
-                    if eventos_desde_sync >= PROCESSING_SYNC_BATCH_SIZE:
+                    if eventos_desde_sync >= sync_batch_size:
                         self._sync_processing_events_safe(
                             workbook_path,
-                            f"lote de {PROCESSING_SYNC_BATCH_SIZE} eventos D0+2",
+                            f"lote de {sync_batch_size} eventos D0+2",
                         )
                         eventos_desde_sync = 0
                 except Exception as exc:
