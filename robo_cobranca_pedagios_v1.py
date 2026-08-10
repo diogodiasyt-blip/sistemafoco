@@ -67,15 +67,15 @@ APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "SistemaFOC
 UI_CONFIG_PATH = APP_DATA_DIR / "interface_config.json"
 CORAL_CREDENTIAL_TARGET = "SistemaFOCO/RoboCobrancaPedagios/Coral"
 
-# Integração Wallet API (ambiente controlado/teste).
-# O host pode ser sobrescrito por CORAL_API_BASE_URL caso o laboratório use outro backend.
+# Integração operacional com a Wallet API do Coral.
+# O host pode ser sobrescrito por CORAL_API_BASE_URL quando necessário.
 CORAL_API_BASE_URL = os.environ.get("CORAL_API_BASE_URL", "https://servicescoral.aluguefoco.com.br").rstrip("/")
 CORAL_API_LOGIN_URL = f"{CORAL_API_BASE_URL}/api/auth/login"
 CORAL_API_RENT_AGREEMENT_URL = f"{CORAL_API_BASE_URL}/api/rentagreement"
 CORAL_API_TOKENS_URL = f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/tokens"
 CORAL_API_WALLET_PAYMENT_URL = f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/wallet-payment"
 CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "45"))
-# Passphrase observada no bundle do laboratório; pode ser sobrescrita sem alterar o código.
+# Passphrase usada pelo frontend do Coral; pode ser sobrescrita sem alterar o código.
 CORAL_WALLET_ENCODE = os.environ.get("CORAL_WALLET_ENCODE", "7HjWayV1f0")
 PENDING_CONTROL_DIR = "_controle_robo_pedagios"
 PENDING_D0_FILENAME = "pendencias_d0.jsonl"
@@ -4863,6 +4863,22 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                     detalhe,
                 )
 
+            http_status = int(response.get("_http_status", 200) or 200)
+            if http_status >= 500 or http_status in {408, 425, 429}:
+                detalhe = (
+                    f"Resposta HTTP {http_status} ambigua ao tentar {descricao}; "
+                    "os demais cartoes nao serao tentados automaticamente."
+                )
+                self._log(f"Wallet API: {detalhe}")
+                return ResultadoD2Pedagio(
+                    contrato.id_cliente,
+                    contrato.contrato,
+                    "ERRO_D0_2",
+                    len(cartoes),
+                    index,
+                    detalhe,
+                )
+
             data = response.get("data") if isinstance(response, dict) else None
             if not isinstance(data, dict):
                 data = response if isinstance(response, dict) else {}
@@ -5208,7 +5224,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                 f"Executar campanha para {len(campanha.emails)} e-mail(s) novo(s) e {len(campanha.contratos)} contrato(s)?\n\n"
                 f"1) Enviar e-mails sem link pela conta {conta_envio}, quando ainda nao enviados.\n"
                 "2) Enviar as tentativas de cobranca pela Wallet API do Coral, contrato por contrato.\n\n"
-                "IMPORTANTE: esta versao executa chamadas no backend Coral. Use somente a base de teste do laboratorio.\n\n"
+                "As tentativas de cobranca serao executadas diretamente no backend do Coral.\n\n"
                 f"Clientes com link D0 anterior: {campanha.clientes_com_link}\n"
                 f"Clientes com e-mail anterior: {len(campanha.clientes_email_previo)}\n"
                 "Clientes sem link D0 anterior: nao serao processados\n"
@@ -5265,8 +5281,7 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
             (
                 f"Executar a etapa 2 para {len(contratos)} contrato(s) no Coral?\n\n"
                 f"Canal: {canal}\n"
-                "A cobranca sera enviada pela Wallet API, contrato por contrato.\n\n"
-                "Use somente a base de teste do laboratorio."
+                "A cobranca sera enviada pela Wallet API, contrato por contrato."
             ),
         ):
             return
