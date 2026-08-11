@@ -1,11 +1,19 @@
+import base64
+import binascii
+import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import customtkinter as ctk
 import multiprocessing
@@ -16,13 +24,6 @@ try:
 except Exception:
     keyring = None
 from PIL import Image
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 if getattr(sys, "frozen", False):
@@ -38,10 +39,10 @@ BUTTON_BG = "#ef1a14"
 BUTTON_ACTIVE_BG = "#c91410"
 SOFT_RED = "#fff1ef"
 LINK_BLUE = "#2f64d6"
-URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
-URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
-XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
-XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
+CORAL_API_BASE_URL = os.environ.get("CORAL_API_BASE_URL", "https://servicescoral.aluguefoco.com.br").rstrip("/")
+CORAL_API_LOGIN_URL = f"{CORAL_API_BASE_URL}/api/auth/login"
+CORAL_API_CONTRACT_PDF_URL = f"{CORAL_API_BASE_URL}/api/pdf/management/voucher/pdf"
+CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "60"))
 APP_CREDENTIAL_SERVICE = "SistemaFOCO"
 CREDENTIAL_MODULE_KEY = "contratos_coral"
 
@@ -75,155 +76,182 @@ def get_desktop_path():
         return os.path.join(os.path.expanduser("~"), "Desktop")
 
 
-def iniciar_driver(pasta_download, headless, log_callback):
-    status = "INVISIVEL" if headless else "VISIVEL"
-    log_callback(f"Iniciando Chrome ({status}) - Pasta: {pasta_download}")
-
-    options = webdriver.ChromeOptions()
-    if headless:
-        options.add_argument("--headless=new")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-gpu")
-
-    prefs = {
-        "download.default_directory": pasta_download,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "plugins.always_open_pdf_externally": True,
-    }
-    options.add_experimental_option("prefs", prefs)
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=options)
+class CoralApiUnauthorizedError(RuntimeError):
+    """Token da API do Coral expirado ou invalido."""
 
 
-def login(driver, usuario, senha, log_callback):
-    log_callback("Fazendo login...")
-    driver.get(URL_CORAL_LOGIN)
-    wait = WebDriverWait(driver, 20)
-
-    seletores_usuario = [
-        (By.XPATH, '//input[@placeholder="Usuário"]'),
-        (By.XPATH, "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[1]/input"),
-        (By.XPATH, '//input[@placeholder="Usuario"]'),
-        (By.XPATH, '//input[@placeholder="Usuário"]'),
-        (By.XPATH, '//input[@type="text"]'),
-    ]
-    seletores_senha = [
-        (By.XPATH, "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[2]/input"),
-        (By.XPATH, '//input[@placeholder="Senha"]'),
-        (By.XPATH, '//input[@type="password"]'),
-    ]
-
-    usuario_field = None
-    for by, seletor in seletores_usuario:
-        try:
-            usuario_field = wait.until(EC.presence_of_element_located((by, seletor)))
-            break
-        except Exception:
-            continue
-    if usuario_field is None:
-        raise RuntimeError("Nao foi possivel localizar o campo de usuario na tela de login.")
-
-    senha_field = None
-    for by, seletor in seletores_senha:
-        try:
-            senha_field = wait.until(EC.presence_of_element_located((by, seletor)))
-            break
-        except Exception:
-            continue
-    if senha_field is None:
-        raise RuntimeError("Nao foi possivel localizar o campo de senha na tela de login.")
-
-    usuario_field.clear()
-    usuario_field.send_keys(usuario)
-    senha_field.clear()
-    senha_field.send_keys(senha)
-    senha_field.send_keys(Keys.ENTER)
-    time.sleep(5)
-    log_callback("Login realizado")
-
-
-def ir_para_tela_contratos(driver, log_callback):
-    wait = WebDriverWait(driver, 20)
-    log_callback("Indo para tela base de contratos...")
-    driver.get(URL_CORAL_CONTRATOS)
-    wait.until(EC.element_to_be_clickable((By.XPATH, XPATH_ABA_CONTRATOS))).click()
-    wait.until(EC.presence_of_element_located((By.XPATH, XPATH_CAMPO_BUSCA_CONTRATOS)))
-    log_callback("Tela base de contratos validada")
-
-
-def esperar_download(pasta_download, contrato, log_callback, timeout=60):
-    inicio = time.time()
-    log_callback(f"Aguardando download do contrato {contrato}...")
-
-    while time.time() - inicio < timeout:
-        arquivos = [f for f in os.listdir(pasta_download) if f.endswith(".pdf")]
-        if arquivos:
-            ultimo = max(arquivos, key=lambda x: os.path.getctime(os.path.join(pasta_download, x)))
-            log_callback(f"{contrato} -> PDF baixado -> {ultimo}")
-            return True
-        time.sleep(1.0)
-
-    log_callback(f"{contrato} -> Nenhum PDF detectado")
-    return False
-
-
-def buscar(driver, numero, log_callback):
-    wait = WebDriverWait(driver, 15)
+def _api_error_detail(raw):
     try:
-        ir_para_tela_contratos(driver, log_callback)
-        campo = wait.until(EC.presence_of_element_located((By.XPATH, XPATH_CAMPO_BUSCA_CONTRATOS)))
-        campo.clear()
-        campo.send_keys(numero)
-        campo.send_keys(Keys.ENTER)
-        wait.until(
-            EC.presence_of_element_located(
-                (By.XPATH, f"//*[@id='tableCRUD']/tbody/tr/td[2][contains(text(), '{numero}')]")
-            )
-        )
-        log_callback(f"{numero} encontrado")
-        return True
+        payload = json.loads(raw.decode("utf-8", errors="replace")) if raw else {}
     except Exception:
-        log_callback(f"{numero} nao encontrado")
-        return False
+        payload = {}
+    if isinstance(payload, dict):
+        return str(payload.get("message") or payload.get("error") or "").strip()
+    return ""
 
 
-def baixar(driver, log_callback):
-    wait = WebDriverWait(driver, 20)
-    log_callback("Iniciando download...")
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//i[contains(@class,'ellipsis')]"))).click()
-    time.sleep(1)
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Reenviar')]"))).click()
-    time.sleep(1)
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Baixar PDF')]"))).click()
-    time.sleep(1)
-    botao_idioma = None
-    for seletor in [
-        "//button[contains(.,'Português')]",
-        "//button[contains(.,'Portugues')]",
-    ]:
+def login_coral_api(usuario, senha, opener=urlopen):
+    usuario = str(usuario or "").strip()
+    senha = str(senha or "")
+    if not usuario or not senha:
+        raise RuntimeError("Informe usuario e senha do Coral.")
+
+    body = json.dumps({"login": usuario, "password": senha}, separators=(",", ":")).encode("utf-8")
+    request = Request(
+        CORAL_API_LOGIN_URL,
+        data=body,
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "User-Agent": "SistemaFOCO-RoboContratos/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=CORAL_API_HTTP_TIMEOUT_SECONDS) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        detail = _api_error_detail(exc.read())
+        raise RuntimeError(f"Login Coral API HTTP {exc.code}: {detail or 'acesso recusado'}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Falha de comunicacao no login da API do Coral: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Timeout no login da API do Coral.") from exc
+
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError("Login da API do Coral retornou resposta invalida.") from exc
+    data = payload.get("data") if isinstance(payload, dict) else None
+    token = str(data.get("token") or "").strip() if isinstance(data, dict) else ""
+    if not token:
+        raise RuntimeError("Login da API do Coral nao retornou data.token.")
+    return token
+
+
+def _decode_pdf_candidate(value):
+    if isinstance(value, bytes):
+        return value if value.lstrip().startswith(b"%PDF-") else None
+    if isinstance(value, list) and all(isinstance(item, int) and 0 <= item <= 255 for item in value):
+        decoded = bytes(value)
+        return decoded if decoded.lstrip().startswith(b"%PDF-") else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lower().startswith(("http://", "https://")):
+            return text
+        if text.lower().startswith("data:application/pdf;base64,"):
+            text = text.split(",", 1)[1]
         try:
-            botao_idioma = wait.until(EC.element_to_be_clickable((By.XPATH, seletor)))
-            break
-        except Exception:
-            continue
-    if botao_idioma is None:
-        raise RuntimeError("Nao foi possivel localizar o botao de idioma para baixar o PDF.")
-    botao_idioma.click()
-    time.sleep(3)
+            decoded = base64.b64decode(text, validate=False)
+        except (ValueError, binascii.Error):
+            return None
+        return decoded if decoded.lstrip().startswith(b"%PDF-") else None
+    if isinstance(value, dict):
+        for key in ("pdf", "base64", "content", "file", "body", "url", "downloadUrl", "data"):
+            if key not in value:
+                continue
+            decoded = _decode_pdf_candidate(value[key])
+            if decoded is not None:
+                return decoded
+    return None
 
-    if len(driver.window_handles) > 1:
-        driver.switch_to.window(driver.window_handles[-1])
-        time.sleep(5)
-        driver.close()
-        driver.switch_to.window(driver.window_handles[0])
 
-    wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(.,'Fechar')]"))).click()
-    log_callback("Download enviado")
+def _extract_pdf_response(raw, content_type=""):
+    if raw.lstrip().startswith(b"%PDF-"):
+        return raw
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Endpoint de PDF retornou conteudo invalido ({content_type or 'tipo nao informado'})."
+        ) from exc
+    decoded = _decode_pdf_candidate(payload)
+    if decoded is None:
+        raise RuntimeError("Endpoint de PDF nao retornou arquivo, base64 ou URL reconhecivel.")
+    return decoded
+
+
+def _download_pdf_request(token, contrato, opener=urlopen):
+    query = urlencode(
+        {
+            "reservationId": contrato,
+            "language": "PORTUGUESE",
+            "isRentAgreement": "true",
+        }
+    )
+    request = Request(
+        f"{CORAL_API_CONTRACT_PDF_URL}?{query}",
+        headers={
+            "Accept": "application/json, text/plain, */*",
+            "Authorization": f"Bearer {token}",
+            "Origin": "https://coral.aluguefoco.com.br",
+            "Referer": "https://coral.aluguefoco.com.br/",
+            "User-Agent": "SistemaFOCO-RoboContratos/1.0",
+        },
+        method="GET",
+    )
+    try:
+        with opener(request, timeout=CORAL_API_HTTP_TIMEOUT_SECONDS) as response:
+            raw = response.read()
+            content_type = str(response.headers.get("Content-Type") or "")
+    except HTTPError as exc:
+        raw = exc.read()
+        if exc.code == 401:
+            raise CoralApiUnauthorizedError("Token da API do Coral expirou.") from exc
+        detail = _api_error_detail(raw)
+        raise RuntimeError(f"PDF Coral API HTTP {exc.code}: {detail or 'download recusado'}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Falha de comunicacao ao baixar PDF: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Timeout ao baixar PDF do Coral.") from exc
+    return _extract_pdf_response(raw, content_type)
+
+
+def baixar_contrato_pdf_api(token, contrato, pasta_download, opener=urlopen):
+    contrato = str(contrato or "").strip()
+    if not contrato:
+        raise ValueError("Numero do contrato vazio.")
+    pdf_result = _download_pdf_request(token, contrato, opener=opener)
+    if isinstance(pdf_result, str):
+        headers = {"User-Agent": "SistemaFOCO-RoboContratos/1.0"}
+        if urlparse(pdf_result).netloc.casefold() == urlparse(CORAL_API_BASE_URL).netloc.casefold():
+            headers["Authorization"] = f"Bearer {token}"
+        request = Request(
+            pdf_result,
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with opener(request, timeout=CORAL_API_HTTP_TIMEOUT_SECONDS) as response:
+                pdf_bytes = _extract_pdf_response(
+                    response.read(),
+                    str(response.headers.get("Content-Type") or ""),
+                )
+        except HTTPError as exc:
+            if exc.code == 401:
+                raise CoralApiUnauthorizedError("Token expirou ao abrir a URL do PDF.") from exc
+            raise RuntimeError(f"URL do PDF retornou HTTP {exc.code}.") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Falha ao abrir a URL retornada para o PDF: {exc.reason}") from exc
+    else:
+        pdf_bytes = pdf_result
+
+    if not isinstance(pdf_bytes, bytes) or not pdf_bytes.lstrip().startswith(b"%PDF-"):
+        raise RuntimeError("Arquivo recebido nao possui assinatura valida de PDF.")
+    output_dir = Path(pasta_download)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_contract = re.sub(r"[^A-Za-z0-9._-]+", "_", contrato).strip("._") or "contrato"
+    output_path = output_dir / f"{safe_contract}.pdf"
+    temp_path = output_dir / f".{safe_contract}.pdf.part"
+    try:
+        temp_path.write_bytes(pdf_bytes)
+        os.replace(temp_path, output_path)
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return output_path
 
 
 def atualizar_relatorio_contratos(relatorio_path, registros, contrato, status, log_callback):
@@ -234,18 +262,32 @@ def atualizar_relatorio_contratos(relatorio_path, registros, contrato, status, l
         log_callback(f"Nao foi possivel atualizar o relatorio: {exc}")
 
 
-def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_callback, queue_result, progress_callback):
+def montar_mensagem_resumo_execucao(success, failed, tempo, relatorio_path=None):
+    linhas = [
+        f"Sucessos: {len(success)}",
+        f"Erros: {len(failed)}",
+        f"Tempo total: {tempo}",
+    ]
+    if relatorio_path:
+        linhas.extend(["", f"Relatorio completo: {relatorio_path}"])
+
+    if failed:
+        linhas.extend(["", "Contratos com erro:", *failed])
+    else:
+        linhas.extend(["", "Nenhum contrato com erro."])
+
+    return "\n".join(linhas)
+
+
+def executar_robo(usuario, senha, planilha_path, pasta_download, log_callback, queue_result, progress_callback):
     start_time = time.time()
     success = []
     failed = []
-    processed = set()
     relatorio_registros = []
     relatorio_path = os.path.join(
         os.path.dirname(os.path.abspath(planilha_path)),
         f"Relatorio_Contratos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
     )
-    driver = None
-
     log_callback("Validando pasta de salvamento...")
     try:
         os.makedirs(pasta_download, exist_ok=True)
@@ -255,58 +297,38 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
         return
 
     try:
-        driver = iniciar_driver(pasta_download, headless, log_callback)
-        login(driver, usuario, senha, log_callback)
+        log_callback("Processamento direto pela API do Coral; o Chrome nao sera aberto.")
+        log_callback("Autenticando na API do Coral...")
+        token = login_coral_api(usuario, senha)
+        log_callback("Autenticacao da API confirmada.")
 
         df = pd.read_excel(planilha_path)
-        contratos = df["contrato"].dropna().astype(str).tolist()
+        if "contrato" not in df.columns:
+            raise ValueError("A planilha precisa conter a coluna 'contrato'.")
+        contratos = list(dict.fromkeys(df["contrato"].dropna().astype(str).str.strip().tolist()))
+        contratos = [contrato for contrato in contratos if contrato]
         total = len(contratos)
         log_callback(f"Iniciando processamento de {total} contratos...")
         log_callback(f"Relatorio em tempo real: {relatorio_path}")
 
         for i, contrato in enumerate(contratos, 1):
-            if contrato in processed:
-                continue
-            processed.add(contrato)
-
             log_callback(f"\n[{i}/{total}] Processando: {contrato}")
             try:
-                if not buscar(driver, contrato, log_callback):
-                    failed.append(contrato)
-                    atualizar_relatorio_contratos(
-                        relatorio_path,
-                        relatorio_registros,
-                        contrato,
-                        "ERRO - contrato nao encontrado",
-                        log_callback,
-                    )
-                    continue
-
-                baixar(driver, log_callback)
-
-                if esperar_download(pasta_download, contrato, log_callback, timeout=65):
-                    success.append(contrato)
-                    atualizar_relatorio_contratos(
-                        relatorio_path,
-                        relatorio_registros,
-                        contrato,
-                        "BAIXADO",
-                        log_callback,
-                    )
-                else:
-                    failed.append(contrato)
-                    atualizar_relatorio_contratos(
-                        relatorio_path,
-                        relatorio_registros,
-                        contrato,
-                        "ERRO - PDF nao detectado",
-                        log_callback,
-                    )
-
-                progress_callback((i / total) * 100)
-
-                ir_para_tela_contratos(driver, log_callback)
-
+                try:
+                    pdf_path = baixar_contrato_pdf_api(token, contrato, pasta_download)
+                except CoralApiUnauthorizedError:
+                    log_callback("Token expirado; renovando autenticacao antes de repetir o GET do PDF.")
+                    token = login_coral_api(usuario, senha)
+                    pdf_path = baixar_contrato_pdf_api(token, contrato, pasta_download)
+                success.append(contrato)
+                log_callback(f"{contrato} -> Download concluído, renomeado para -> {pdf_path.name}")
+                atualizar_relatorio_contratos(
+                    relatorio_path,
+                    relatorio_registros,
+                    contrato,
+                    "BAIXADO",
+                    log_callback,
+                )
             except Exception as e:
                 erro = str(e)
                 log_callback(f"Erro em {contrato}: {erro}")
@@ -318,21 +340,24 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, headless, log_c
                     f"ERRO - {erro}",
                     log_callback,
                 )
+            finally:
+                progress_callback((i / total) * 100 if total else 100)
 
     except Exception as e:
         log_callback(f"ERRO FATAL: {str(e)}")
-    finally:
-        if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
 
     elapsed = time.time() - start_time
     minutes = int(elapsed // 60)
     seconds = int(elapsed % 60)
 
-    queue_result.put({"success": success, "failed": failed, "time": f"{minutes}min {seconds}s"})
+    queue_result.put(
+        {
+            "success": success,
+            "failed": failed,
+            "time": f"{minutes}min {seconds}s",
+            "relatorio_path": relatorio_path,
+        }
+    )
     log_callback(f"\nFINALIZADO em {minutes}min {seconds}s -> Sucessos: {len(success)} | Erros: {len(failed)}")
 
     try:
@@ -376,7 +401,6 @@ class RoboContratosApp:
         self.senha_var = tk.StringVar(value="")
         self.planilha_var = tk.StringVar(value="")
         self.pasta_var = tk.StringVar(value=pasta_padrao)
-        self.headless_var = tk.BooleanVar(value=True)
 
         self.log_queue = queue.Queue()
         self.result_queue = queue.Queue()
@@ -497,7 +521,7 @@ class RoboContratosApp:
         ).pack(anchor="w")
         ctk.CTkLabel(
             texto,
-            text="Busca, reenvio e download de contratos com progresso em tempo real.",
+            text="Download de contratos.",
             text_color=MUTED_TEXT,
             font=("Segoe UI", 14),
         ).pack(anchor="w", pady=(6, 0))
@@ -552,17 +576,18 @@ class RoboContratosApp:
         ).pack(side="left")
 
         config = self.criar_secao(scroll, "Configuracoes")
-        self.check_headless = ctk.CTkCheckBox(
+        api_status = ctk.CTkFrame(
             config,
-            text="Executar em modo invisivel (sem abrir janela do Chrome)",
-            variable=self.headless_var,
+            fg_color=SOFT_RED,
+            corner_radius=12,
+        )
+        api_status.pack(fill="x", padx=18, pady=(0, 18))
+        ctk.CTkLabel(
+            api_status,
+            text="Api configurada",
             font=("Segoe UI", 13),
             text_color="#303030",
-            checkbox_width=22,
-            checkbox_height=22,
-            corner_radius=8,
-        )
-        self.check_headless.pack(anchor="w", padx=18, pady=(0, 18))
+        ).pack(anchor="w", padx=14, pady=12)
 
         arquivos = self.criar_secao(scroll, "Planilha e Pasta")
         botoes = ctk.CTkFrame(arquivos, fg_color="transparent")
@@ -681,7 +706,7 @@ class RoboContratosApp:
 
         ctk.CTkLabel(
             scroll,
-            text="Desenvolvido por Diogo Medeiros © 2026",
+            text="Desenvolvido por Diogo Medeiros 2026",
             text_color="#b85b52",
             font=("Segoe UI", 11),
         ).pack(anchor="w", padx=12, pady=(0, 12))
@@ -738,7 +763,6 @@ class RoboContratosApp:
                 self.senha_var.get(),
                 self.planilha_var.get(),
                 self.pasta_var.get(),
-                self.headless_var.get(),
                 self.log,
                 self.result_queue,
                 self.atualizar_progresso,
@@ -751,14 +775,11 @@ class RoboContratosApp:
         s = result["success"]
         f = result["failed"]
         tempo = result.get("time", "N/A")
+        relatorio_path = result.get("relatorio_path")
 
         messagebox.showinfo(
             "Execucao Finalizada",
-            f"Sucessos: {len(s)}\nErros: {len(f)}\nTempo total: {tempo}\n\n"
-            + "Sucessos:\n"
-            + "\n".join(s)
-            + "\n\nErros:\n"
-            + "\n".join(f),
+            montar_mensagem_resumo_execucao(s, f, tempo, relatorio_path),
         )
 
         self.btn_iniciar.configure(state="normal")
