@@ -106,6 +106,7 @@ WHATSAPP_PEDAGIOS_URL = (
     "Por%20favor%2C%20envie%20essa%20mensagem%20e%20após%20isso%2C%20selecione%20a%20opção%20"
     "%22Contratuais%20e%20Locações%22%20no%20menu%20inicial."
 )
+CAMPAIGN_ATTACHMENT_NOTE = "[a lista com data/hora/praça de cada passagem consta em anexo]."
 SIGNATURE_IMAGE_FILENAME = "assinatura_email_pedagio_whatsapp.png"
 SIGNATURE_IMAGE_PATH = Path(__file__).resolve().parent.parent / "assets" / SIGNATURE_IMAGE_FILENAME
 SIGNATURE_CONTENT_ID = "assinatura_pedagios@foco"
@@ -906,37 +907,62 @@ def _extrair_bloco_dados_locacao(corpo: str) -> str:
     return text[start:end].strip()
 
 
+def _formatar_dados_locacao_campanha(email: EmailD0Pedagio) -> str:
+    bloco_original = _extrair_bloco_dados_locacao(email.corpo)
+    linhas_formatadas: list[str] = []
+    for linha in bloco_original.splitlines():
+        linha = linha.strip()
+        if not linha:
+            if linhas_formatadas and linhas_formatadas[-1] != "":
+                linhas_formatadas.append("")
+            continue
+        normalizada = _normalizar_texto(linha)
+        if normalizada.startswith("DADOS DA LOCACAO E UTILIZACAO"):
+            continue
+        if normalizada.startswith("PLACA DO VEICULO:") or normalizada.startswith("LOJA:"):
+            continue
+        if normalizada.startswith("QUANTIDADE TOTAL DE PASSAGENS") or normalizada.startswith(
+            "VALOR TOTAL A REGULARIZAR"
+        ):
+            continue
+        if normalizada.startswith("CONTRATO:"):
+            linha = f"Contrato {linha.split(':', 1)[1].strip()}"
+        elif normalizada.startswith("RETIRADA:"):
+            linha = f"Retirada {linha.split(':', 1)[1].strip()}"
+        elif normalizada.startswith("DEVOLUCAO:"):
+            valor = linha.split(":", 1)[1].strip().rstrip(".")
+            linha = f"Devolução {valor}."
+        linhas_formatadas.append(linha)
+
+    while linhas_formatadas and not linhas_formatadas[-1]:
+        linhas_formatadas.pop()
+    if not linhas_formatadas:
+        linhas_formatadas = [
+            f"Contrato {email.contrato_referencia or 'Não informado'}",
+            "Retirada Não informada",
+            "Devolução Não informada.",
+            f"Quantidade de passagens em pedágio: {email.total_pedagios}",
+            f"Valor a regularizar: R$ {_format_brl(email.valor_total)}",
+        ]
+    return "Dados da Locação e Utilização do pedágio:\n" + "\n".join(linhas_formatadas)
+
+
 def preparar_email_campanha_cartao_sem_link(email: EmailD0Pedagio, reaviso_link: bool = False) -> EmailD0Pedagio:
-    dados_locacao = _extrair_bloco_dados_locacao(email.corpo)
-    if not dados_locacao:
-        dados_locacao = (
-            "Resumo da pendencia:\n\n"
-            f"Quantidade total de passagens em pedagio: {email.total_pedagios}\n"
-            f"Valor total a regularizar: R$ {_format_brl(email.valor_total)}"
-        )
+    dados_locacao = _formatar_dados_locacao_campanha(email)
 
-    if reaviso_link:
-        abertura = (
-            "Identificamos valores pendentes referentes a utilizacao de pedagios durante sua locacao, "
-            "notificados pelas operadoras de tag apos o encerramento do contrato."
-        )
-    else:
-        abertura = (
-            "Identificamos valores pendentes referentes a utilizacao de pedagios durante sua locacao, "
-            "notificados pelas operadoras de tag apos o encerramento do contrato."
-        )
+    corpo = f"""Olá, {email.nome}!
 
-    corpo = f"""Ola, {email.nome}!
-
-{abertura}
+Identificamos passagens em pedágio durante sua locação, notificadas pela operadora de tag após o encerramento do contrato (cláusula 6.1 do Contrato de Locação).
 
 {dados_locacao}
 
-Conforme previsto no Contrato de Locacao, informamos que sera realizada uma tentativa de debito no cartao cadastrado e utilizado durante a locacao, correspondente ao valor total informado acima, referente as passagens em pedagios identificadas apos o encerramento do contrato.
+{CAMPAIGN_ATTACHMENT_NOTE}
 
-Caso a transacao seja aprovada, o debito sera considerado quitado, nao sendo necessaria nenhuma acao adicional.
+A tentativa de débito no cartão cadastrado ocorrerá nas próximas 24 horas. Caso aprovada, o débito será considerado quitado e nenhuma ação adicional será necessária.
 
-Se, por qualquer motivo, a cobranca nao puder ser concluida (como cartao vencido, bloqueado, cancelado ou limite insuficiente), poderemos entrar em contato para disponibilizar outras formas de regularizacao do debito, conforme previsto contratualmente. Em caso de duvidas, nossa equipe permanece a disposicao. Basta responder a este e-mail ou entrar em contato por meio de nossos canais de atendimento: {WHATSAPP_PEDAGIOS_URL}
+Caso o cartão esteja vencido, bloqueado ou sem limite, você pode regularizar diretamente via PIX, cartão de crédito, débito ou boleto, sem precisar aguardar novo contato.
+
+Se identificar alguma divergência nas passagens listadas, responda este e-mail em até 5 dias úteis com o comprovante de pagamento ou a justificativa, e nossa equipe fará a análise. Após esse prazo, a cobrança será processada normalmente.
 """
     assunto = "Pendencia de pedagios: tentativa de cobranca no cartao cadastrado"
     return replace(email, assunto=assunto, corpo=corpo, link_pagamento="")
@@ -1493,26 +1519,31 @@ def sincronizar_eventos_processamento_json(
             d2_links.append(payload)
             synced_ids.append(event_id)
 
-    for email, usuario in d0_links:
-        registrar_link_d0_excel(
-            workbook_path,
-            id_cliente=email.id_cliente,
-            contrato_referencia=email.contrato_referencia,
-            valor_link=email.valor_total,
-            link_pagamento=email.link_pagamento,
-            usuario=usuario,
-        )
-        clientes_atualizados += 1
-
+    links_pendentes = d0_links
     for (conta_envio, registrar_link, usuario, campanha_cartao), emails in d0_por_grupo.items():
+        links_do_lote = links_pendentes if not campanha_cartao else []
         clientes_atualizados += registrar_processamento_d0_excel(
             workbook_path,
             emails,
             conta_envio=conta_envio,
             enviado=True,
+            processed_at=data_ref,
             registrar_link=registrar_link,
             usuario=usuario,
             campanha_cartao=campanha_cartao,
+            links_criados=links_do_lote,
+        )
+        if links_do_lote:
+            links_pendentes = []
+
+    if links_pendentes:
+        clientes_atualizados += registrar_processamento_d0_excel(
+            workbook_path,
+            [],
+            conta_envio=DEFAULT_OUTLOOK_ACCOUNT,
+            enviado=False,
+            processed_at=data_ref,
+            links_criados=links_pendentes,
         )
 
     if d2_resultados:
@@ -2216,6 +2247,7 @@ def _montar_html_email_d0(email: EmailD0Pedagio) -> str:
         corpo_html = corpo_html.replace(saudacao, saudacao.replace(nome_escaped, f"<strong>{nome_escaped}</strong>"))
     for titulo in ("Dados da LocaÃ§Ã£o e UtilizaÃ§Ã£o do pedÃ¡gio:", "Dados da Locação e Utilização do pedágio:"):
         corpo_html = corpo_html.replace(titulo, f"<strong>{titulo}</strong>")
+    corpo_html = corpo_html.replace(CAMPAIGN_ATTACHMENT_NOTE, f"<em>{CAMPAIGN_ATTACHMENT_NOTE}</em>")
     for total_pedagios_line in (
         f"Quantidade total de passagens em pedÃ¡gio: {email.total_pedagios}",
         f"Quantidade total de passagens em pedágio: {email.total_pedagios}",
@@ -2362,6 +2394,7 @@ def criar_email_outlook(
     log_callback=None,
     anexos: list[str | Path] | None = None,
     exigir_link: bool = True,
+    exigir_assinatura: bool = False,
 ) -> str:
     if not _is_valid_email(email.destinatario):
         raise RuntimeError(f"E-mail invalido para {email.nome}: {email.destinatario}")
@@ -2395,6 +2428,8 @@ def criar_email_outlook(
             assinatura_local = _preparar_assinatura_outlook()
             _anexar_imagem_inline_outlook(mail, assinatura_local)
             etapa = log_etapa("assinatura local anexada", etapa)
+        elif exigir_assinatura:
+            raise FileNotFoundError(f"Imagem obrigatoria do WhatsApp nao encontrada: {assinatura_origem}")
         elif log_callback is not None:
             log_callback(f"Outlook: assinatura local nao encontrada: {assinatura_origem}")
         for anexo in anexos or []:
@@ -2550,8 +2585,10 @@ def registrar_processamento_d0_excel(
     registrar_link: bool = False,
     usuario: str = "",
     campanha_cartao: bool = False,
+    links_criados: list[tuple[EmailD0Pedagio, str]] | None = None,
 ) -> int:
-    if not emails:
+    links_criados = links_criados or []
+    if not emails and not links_criados:
         return 0
 
     workbook_path = Path(path)
@@ -2620,6 +2657,51 @@ def registrar_processamento_d0_excel(
         contrato_id_col = contratos_headers.get("ID_CLIENTE")
         if not contrato_id_col:
             raise ValueError("Coluna obrigatoria ausente em CONTRATOS: ID_CLIENTE")
+
+        linhas_clientes: dict[str, int] = {}
+        for row in range(2, clientes_sheet.max_row + 1):
+            row_id_cliente = str(clientes_sheet.cell(row=row, column=id_cliente_col).value or "").strip()
+            if row_id_cliente:
+                linhas_clientes.setdefault(row_id_cliente, row)
+
+        links_atualizados = 0
+        for email_link, usuario_link in links_criados:
+            row = linhas_clientes.get(email_link.id_cliente)
+            if row is None:
+                raise ValueError(f"Cliente nao encontrado para registrar link D0: {email_link.id_cliente}")
+
+            link_anterior = str(
+                clientes_sheet.cell(row=row, column=clientes_headers["LINK_D0"]).value or ""
+            ).strip()
+            clientes_sheet.cell(row=row, column=clientes_headers["LINK_D0"], value=email_link.link_pagamento)
+            clientes_sheet.cell(row=row, column=clientes_headers["VALOR_LINK_D0"], value=email_link.valor_total)
+            clientes_sheet.cell(row=row, column=clientes_headers["DATA_LINK_D0"], value=_date_to_text(process_date))
+            clientes_sheet.cell(
+                row=row,
+                column=clientes_headers["CONTRATO_REFERENCIA_LINK_D0"],
+                value=email_link.contrato_referencia,
+            )
+            links_atualizados += 1
+
+            # Uma retomada pode reencontrar um link que ja foi salvo antes da
+            # interrupcao. Nesse caso, preserva o checkpoint sem duplicar o historico.
+            if link_anterior == email_link.link_pagamento:
+                continue
+            historico_row = historico_sheet.max_row + 1
+            link_values = {
+                "DATA_HORA": process_datetime_text,
+                "ID_CLIENTE": email_link.id_cliente,
+                "DOCUMENTO": email_link.documento,
+                "CLIENTE": email_link.nome,
+                "CONTRATO": email_link.contrato_referencia,
+                "ETAPA": "D0",
+                "ACAO": "LINK_D0",
+                "RESULTADO": "LINK_GERADO",
+                "DETALHE": f"Link D0 gerado. Valor R$ {_format_brl(email_link.valor_total)}. Link: {email_link.link_pagamento}",
+                "USUARIO": usuario_link,
+            }
+            for column, value in link_values.items():
+                historico_sheet.cell(row=historico_row, column=historico_headers[column], value=value)
 
         atualizados = 0
         for row in range(2, clientes_sheet.max_row + 1):
@@ -2714,7 +2796,7 @@ def registrar_processamento_d0_excel(
                 historico_sheet.cell(row=row, column=historico_headers[column], value=value)
 
         _safe_save_workbook(workbook, workbook_path)
-        return atualizados
+        return atualizados + links_atualizados
     finally:
         workbook.close()
 
@@ -5455,19 +5537,26 @@ class RoboCobrancaPedagiosApp(ctk.CTk):
                         self._log(f"Campanha: relatorio de pedagios anexado para {email.nome}: {pdf_relatorio}")
                     except Exception as exc:
                         self._log(
-                            f"Campanha: nao foi possivel gerar/anexar relatorio de pedagios "
-                            f"para {email.nome}. E-mail seguira sem PDF. Erro: {exc}"
+                            f"Campanha: nao foi possivel gerar/anexar relatorio de pedagios para {email.nome}. "
+                            f"O e-mail seguira sem PDF. Erro: {exc}"
                         )
 
+                    email_envio = email
+                    if not anexos_email and CAMPAIGN_ATTACHMENT_NOTE in email.corpo:
+                        email_envio = replace(
+                            email,
+                            corpo=email.corpo.replace(f"\n{CAMPAIGN_ATTACHMENT_NOTE}\n", "\n"),
+                        )
                     criar_email_outlook(
-                        email,
+                        email_envio,
                         conta_envio=conta_envio,
                         log_callback=self._log,
                         exigir_link=False,
+                        exigir_assinatura=True,
                         anexos=anexos_email,
                     )
                     payload_evento = {
-                        "email": _email_d0_to_dict(email),
+                        "email": _email_d0_to_dict(email_envio),
                         "conta_envio": conta_envio,
                         "registrar_link": False,
                         "usuario": self.coral_user_var.get().strip(),
