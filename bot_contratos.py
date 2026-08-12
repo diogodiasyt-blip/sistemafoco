@@ -241,8 +241,9 @@ def baixar_contrato_pdf_api(token, contrato, pasta_download, opener=urlopen):
     output_dir = Path(pasta_download)
     output_dir.mkdir(parents=True, exist_ok=True)
     safe_contract = re.sub(r"[^A-Za-z0-9._-]+", "_", contrato).strip("._") or "contrato"
-    output_path = output_dir / f"{safe_contract}.pdf"
-    temp_path = output_dir / f".{safe_contract}.pdf.part"
+    filename = f"{safe_contract}-voucher.pdf"
+    output_path = output_dir / filename
+    temp_path = output_dir / f".{filename}.part"
     try:
         temp_path.write_bytes(pdf_bytes)
         os.replace(temp_path, output_path)
@@ -321,7 +322,7 @@ def executar_robo(usuario, senha, planilha_path, pasta_download, log_callback, q
                     token = login_coral_api(usuario, senha)
                     pdf_path = baixar_contrato_pdf_api(token, contrato, pasta_download)
                 success.append(contrato)
-                log_callback(f"{contrato} -> Download concluído, renomeado para -> {pdf_path.name}")
+                log_callback(f"{contrato} -> Download concluído: {pdf_path.name}")
                 atualizar_relatorio_contratos(
                     relatorio_path,
                     relatorio_registros,
