@@ -19,7 +19,7 @@ from datetime import time as dt_time
 from datetime import timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -89,7 +89,8 @@ CARD_CAMPAIGN_SYNC_BATCH_SIZE = 200
 CORAL_OPERATION_MAX_ATTEMPTS = 2
 CORAL_LOCAL_ACTION_MAX_ATTEMPTS = 2
 DEFAULT_CORAL_HEADLESS = True
-PEDAGIOS_REPORT_APP_URL = "https://consulta-pedagios.netlify.app/"
+PEDAGIOS_REPORT_APP_URL = "https://foco-pedagios.netlify.app/"
+PEDAGIOS_REPORT_PROXY_PATH = "/.netlify/functions/supabase-proxy"
 RELATORIOS_PDF_DIR = APP_DATA_DIR / "relatorios_pdf"
 OUTLOOK_FOLDER_OUTBOX = 4
 OUTLOOK_SEND_CONFIRM_TIMEOUT_SECONDS = 60
@@ -417,11 +418,11 @@ def _slug_filename(value: object, fallback: str = "cliente") -> str:
 
 
 def _parse_supabase_public_config(html_text: str) -> tuple[str, str]:
-    url_match = re.search(r'SUPA_URL\s*=\s*"([^"]+)"', html_text)
-    key_match = re.search(r'SUPA_KEY\s*=\s*"([^"]+)"', html_text)
+    url_match = re.search(r"SUPA_URL\s*=\s*(['\"])(.*?)\1", html_text)
+    key_match = re.search(r"SUPA_KEY\s*=\s*(['\"])(.*?)\1", html_text)
     if not url_match or not key_match:
         raise RuntimeError("Nao foi possivel localizar configuracao publica do Supabase no site de pedagios.")
-    return url_match.group(1).strip(), key_match.group(1).strip()
+    return url_match.group(2).strip(), key_match.group(2).strip()
 
 
 _SUPABASE_PUBLIC_CONFIG_CACHE: tuple[str, str] | None = None
@@ -441,11 +442,36 @@ def _carregar_supabase_public_config() -> tuple[str, str]:
     return _SUPABASE_PUBLIC_CONFIG_CACHE
 
 
+def _montar_url_consulta_pedagios(base_url: str, api_key: str, path: str) -> str:
+    rest_path = str(path or "").lstrip("/")
+    if not rest_path.startswith("rest/v1/"):
+        rest_path = f"rest/v1/{rest_path}"
+
+    base_url = str(base_url or "").strip()
+    if not base_url:
+        raise RuntimeError("URL de consulta de pedagios nao configurada.")
+
+    # No site atual, /api/supabase e apenas um prefixo virtual interceptado pelo
+    # JavaScript. Fora do navegador, a consulta precisa passar pela Function.
+    base_path = urlparse(base_url).path.rstrip("/")
+    if api_key.strip().lower() == "proxied" or (base_url.startswith("/") and base_path == "/api/supabase"):
+        proxy_url = urljoin(PEDAGIOS_REPORT_APP_URL, PEDAGIOS_REPORT_PROXY_PATH)
+        return f"{proxy_url}?p={quote(rest_path, safe='')}"
+
+    if base_url.startswith("/"):
+        base_url = urljoin(PEDAGIOS_REPORT_APP_URL, base_url)
+    return f"{base_url.rstrip('/')}/{rest_path}"
+
+
 def _supabase_get_public(path: str) -> list[dict[str, object]]:
     base_url, api_key = _carregar_supabase_public_config()
     request = Request(
-        f"{base_url.rstrip('/')}/rest/v1/{path}",
-        headers={"apikey": api_key, "Authorization": f"Bearer {api_key}"},
+        _montar_url_consulta_pedagios(base_url, api_key, path),
+        headers={
+            "Accept": "application/json",
+            "apikey": api_key,
+            "Authorization": f"Bearer {api_key}",
+        },
     )
     with urlopen(request, timeout=45) as response:
         payload = response.read().decode("utf-8", errors="replace")
@@ -469,6 +495,10 @@ def baixar_relatorio_pedagios_cliente(
         doc_sem_zero = doc_digits.lstrip("0")
         if doc_sem_zero and doc_sem_zero != doc_digits and len(doc_sem_zero) >= 6:
             filtros.append(f"doc_cliente.eq.{quote(doc_sem_zero, safe='')}")
+        elif len(doc_digits) == 10:
+            # Se a entrada perdeu o zero inicial, tenta tambem o CPF completo.
+            # O site novo aplica automaticamente a mesma variacao.
+            filtros.append(f"doc_cliente.eq.0{quote(doc_digits, safe='')}")
     if str(nome or "").strip():
         filtros.append(f"nome_cliente.ilike.*{quote(str(nome).strip(), safe='')}*")
     if not filtros:
