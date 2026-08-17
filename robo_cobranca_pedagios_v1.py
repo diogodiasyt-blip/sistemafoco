@@ -874,14 +874,16 @@ def _montar_email_d0(cliente: dict[str, object], contratos: list[dict[str, objec
     link_text = link_pagamento or "{LINK_PAGAMENTO}"
     corpo = f"""Olá, {nome}!
 
-Identificamos, após o encerramento do seu contrato, valores referentes à utilização de pedágios durante sua locação que nos foram notificadas pelas operadoras de tag. Dessa forma, estamos realizando a regularização dos valores abaixo relacionados.
+Identificamos que o pagamento referente aos pedágios utilizados durante sua locação ainda não foi regularizado dentro do prazo informado anteriormente.
 
-Dados da Locação e Utilização do pedágio:
+Os valores abaixo correspondem a utilizações de pedágio notificadas pelas operadoras de tag após o encerramento do contrato:
 
 {(chr(10) + chr(10)).join(blocos)}{aviso_restante}
 
 Quantidade total de passagens em pedágio: {total_pedagios}
 Valor total a regularizar: R$ {_format_brl(valor_total)}
+
+Caso o pagamento já tenha sido realizado recentemente, por favor, desconsidere esta mensagem.
 
 Para sua comodidade, o link para regularização do pagamento já está disponível neste e-mail. Basta acessá-lo para concluir o pagamento de forma rápida e segura.
 
