@@ -90,7 +90,7 @@ FLOW_SPECS = {
             "CONTRATO": {"CONTRATO"},
             "LOJA": {"LOJA", "LOJA "},
             "VALOR": {"VALOR", "VALOR ", "VALOR PAGO"},
-            "DATA PAGAMENTO": {"DATA PAGAMENTO", "DATA_PAGAMENTO"},
+            "DATA PAGAMENTO": {"DATA PAGAMENTO", "DATA DE PAGAMENTO", "DATA_PAGAMENTO"},
             "BAIXADO": {"BAIXADO", "STATUS"},
         },
         "group_hint": "Agrupamento previsto: somar cash por loja.",
@@ -110,7 +110,7 @@ FLOW_SPECS = {
         ],
         "aliases": {
             "LOJA": {"LOJA"},
-            "DATA DE DESPESA": {"DATA DE DESPESA", "DATA DESPESA"},
+            "DATA DE DESPESA": {"DATA DE DESPESA", "DATA DA DESPESA", "DATA DESPESA"},
             "TIPO DA DESPESA": {"TIPO DA DESPESA", "TIPO DESPESA"},
             "DESCRICAO": {"DESCRICAO", "DESCRIÇÃO", "DESCRICAO ", "DESCRIÇÃO "},
             "VALOR": {"VALOR"},
@@ -324,7 +324,7 @@ def _read_material_source(workbook_path: Path, flow_key: str) -> pd.DataFrame:
 
     configured_header = int(flow.get("header_row", 0))
     header_candidates = list(dict.fromkeys([configured_header, 0, 1, 2]))
-    last_missing: list[str] = []
+    best_missing: list[str] | None = None
     for header_row in header_candidates:
         dataframe = pd.read_excel(workbook_path, sheet_name=sheet_name, header=header_row)
         normalized_columns = {_normalize_text(column): column for column in dataframe.columns}
@@ -339,8 +339,10 @@ def _read_material_source(workbook_path: Path, flow_key: str) -> pd.DataFrame:
         missing = [column for column in flow["required_columns"] if column not in renamed.columns]
         if not missing:
             return renamed
-        last_missing = missing
-    raise RuntimeError(f"A aba {flow['sheet_name']} esta sem colunas obrigatorias: {', '.join(last_missing)}")
+        if best_missing is None or len(missing) < len(best_missing):
+            best_missing = missing
+    missing_text = best_missing or list(flow["required_columns"])
+    raise RuntimeError(f"A aba {flow['sheet_name']} esta sem colunas obrigatorias: {', '.join(missing_text)}")
 
 
 def _infer_period_from_sources(cash_df: pd.DataFrame, despesas_df: pd.DataFrame) -> str:
