@@ -8,7 +8,8 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -16,13 +17,6 @@ import customtkinter as ctk
 import pandas as pd
 import requests
 from PIL import Image
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 APP_TITLE = "Robo de Relatorio Coral"
@@ -33,8 +27,8 @@ URL_PING_ABERTURA = "https://docs.google.com/forms/d/e/1FAIpQLScmxNbTO-vXw0LEOKI
 URL_CORAL = "https://coral.aluguefoco.com.br/login"
 URL_DASHBOARD_POS_LOGIN = "https://coral.aluguefoco.com.br/precificacao/dashboard"
 URL_RELATORIOS = "https://coral.aluguefoco.com.br/relatorios"
-CORAL_USERNAME = "ddm"
-CORAL_PASSWORD = "87028542Di@"
+CORAL_USERNAME = os.getenv("FOCO_CORAL_USERNAME", "codp")
+CORAL_PASSWORD = os.getenv("FOCO_CORAL_PASSWORD", "Foco@2026")
 
 XPATH_LOGIN = "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[1]/input"
 XPATH_SENHA = "/html/body/foco-app/div[1]/foco-login/div/div/div/div/div[2]/form/div[2]/input"
@@ -49,7 +43,7 @@ PRIMARY_TEXT = "#d81919"
 MUTED_TEXT = "#5c5c5c"
 BUTTON_BG = "#ef1a14"
 BUTTON_ACTIVE_BG = "#c91410"
-SOFT_RED = "#fff1ef"
+SOFT_RED = "#fff1f0"
 SUCCESS_GREEN = "#0f8a4b"
 WARNING_ORANGE = "#b96a10"
 
@@ -146,7 +140,7 @@ def read_coral_csv(csv_path: Path) -> pd.DataFrame:
     errors: list[str] = []
     for encoding in ("utf-8-sig", "utf-8", "latin1"):
         try:
-            dataframe = pd.read_csv(csv_path, sep=",", decimal=".", encoding=encoding)
+            dataframe = pd.read_csv(csv_path, sep=",", decimal=".", encoding=encoding, dtype=str)
             return normalize_numeric_columns(dataframe)
         except Exception as exc:
             errors.append(f"{encoding}: {exc}")
@@ -183,6 +177,92 @@ def convert_coral_csv_to_xlsx(csv_path: Path, output_dir: Path, start_date: str,
         rows=len(dataframe),
         columns=len(dataframe.columns),
     )
+
+
+CORAL_API_BASE_URL = "https://servicescoral.aluguefoco.com.br"
+CORAL_REPORT_KEY = "finance-brokers-efficiency"
+
+
+class ReportCancelled(Exception):
+    pass
+
+
+def report_api_params(start_date: str, end_date: str) -> dict[str, str]:
+    start, end = parse_ptbr_date(start_date), parse_ptbr_date(end_date)
+    if end < start:
+        raise ValueError("A data final nao pode ser menor que a data inicial.")
+    if (start.year, start.month) != (end.year, end.month):
+        raise ValueError("Selecione datas dentro do mesmo mes, como no portal de faturamento.")
+    try:
+        zone = ZoneInfo("America/Sao_Paulo")
+    except ZoneInfoNotFoundError:
+        if start.year < 2020:
+            raise ValueError("Fuso historico indisponivel para o periodo selecionado.") from None
+        zone = timezone(timedelta(hours=-3))
+    def iso(value):
+        return value.replace(tzinfo=zone).astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return {"periodStart": start.strftime("%Y-%m-%d"), "periodEnd": end.strftime("%Y-%m-%d"),
+            "start": iso(start), "end": iso(end)}
+
+
+def download_coral_report_api(start_date, end_date, download_dir, *, login=None,
+                              password=None, log=lambda message: None,
+                              should_stop=lambda: False, session_factory=requests.Session):
+    params = report_api_params(start_date, end_date)
+    def check_stop():
+        if should_stop():
+            raise ReportCancelled("Execucao interrompida pelo usuario.")
+    def request(session, method, path, **kwargs):
+        check_stop()
+        try:
+            response = session.request(method, CORAL_API_BASE_URL + path,
+                                       allow_redirects=False, **kwargs)
+        except requests.RequestException:
+            raise RuntimeError("Coral API: falha de conexao ou tempo limite; tente novamente.") from None
+        check_stop()
+        if not 200 <= response.status_code < 300:
+            raise RuntimeError(f"Coral API: HTTP {response.status_code} na etapa {path.split('/')[2]}.")
+        return response
+    def json_data(response):
+        try:
+            return response.json()["data"]
+        except (ValueError, KeyError, TypeError):
+            raise RuntimeError("Coral API: resposta JSON invalida ou sem data.") from None
+
+    with session_factory() as session:
+        log("Coral API: autenticando.")
+        auth = json_data(request(session, "POST", "/api/auth/login",
+                                 json={"login": login if login is not None else CORAL_USERNAME,
+                                       "password": password if password is not None else CORAL_PASSWORD},
+                                 headers={"Accept": "application/json"}, timeout=(10, 30)))
+        token = auth.get("token") if isinstance(auth, dict) else None
+        if not isinstance(token, str) or not token.strip():
+            raise RuntimeError("Coral API: autenticacao nao retornou token.")
+        headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+        log("Coral API: gerando relatorio Eficiência Brokers Financeiro.")
+        data = json_data(request(session, "GET",
+            f"/api/analytics/report/generate/{CORAL_REPORT_KEY}",
+            params=params, headers=headers, timeout=(10, 60)))
+        filename = data[0] if isinstance(data, list) and data else None
+        if not isinstance(filename, str) or not re.fullmatch(r"[a-zA-Z0-9._-]+\.csv", filename, re.IGNORECASE):
+            raise RuntimeError("Coral API: nome do CSV ausente ou invalido.")
+        log("Coral API: baixando CSV.")
+        response = request(session, "GET",
+            f"/api/analytics/bitstream/{CORAL_REPORT_KEY}/{filename}",
+            headers={**headers, "Accept": "text/csv, application/octet-stream"}, timeout=(10, 60))
+        content = response.content
+        sample = content[:2048].decode("utf-8-sig", errors="replace").lstrip()
+        content_type = response.headers.get("Content-Type", "").lower()
+        if (not content or not any(separator in sample for separator in ",;\t")
+                or sample.startswith(("<", "{", "[")) or "json" in content_type or "html" in content_type):
+            raise RuntimeError("Coral API: resposta de download vazia ou nao e um CSV valido.")
+        check_stop()
+        # Cada execucao tem sua propria pasta: nao reutiliza nem apaga CSV de outra instancia.
+        run_dir = Path(tempfile.mkdtemp(prefix="coral_report_", dir=download_dir))
+        csv_path = run_dir / filename
+        csv_path.write_bytes(content)
+        log("Coral API: download confirmado.")
+        return csv_path
 
 
 class RoboRelatorioCoralApp(ctk.CTk):
@@ -485,6 +565,12 @@ class RoboRelatorioCoralApp(ctk.CTk):
         render_calendar()
 
     def _validate_inputs(self) -> bool:
+        if not CORAL_USERNAME or not CORAL_PASSWORD:
+            messagebox.showwarning(
+                "Credenciais Coral",
+                "Defina FOCO_CORAL_USERNAME e FOCO_CORAL_PASSWORD nas variaveis de ambiente antes de executar.",
+            )
+            return False
         try:
             start = parse_ptbr_date(self.start_date_var.get())
             end = parse_ptbr_date(self.end_date_var.get())
@@ -493,6 +579,11 @@ class RoboRelatorioCoralApp(ctk.CTk):
             return False
         if end < start:
             messagebox.showwarning("Validacao", "A data final nao pode ser menor que a data inicial.")
+            return False
+        try:
+            report_api_params(self.start_date_var.get(), self.end_date_var.get())
+        except ValueError as exc:
+            messagebox.showwarning("Validacao", str(exc))
             return False
         output_dir = Path(self.output_dir_var.get().strip())
         if not output_dir.exists():
@@ -589,12 +680,10 @@ class RoboRelatorioCoralApp(ctk.CTk):
 
             self.progress_bar.set(0.22)
             self.download_dir.mkdir(parents=True, exist_ok=True)
-            self._clean_download_dir()
-            self.driver = self._create_driver()
-            self.progress_bar.set(0.35)
-            self._login_coral()
-            self.progress_bar.set(0.52)
-            csv_path = self._navigate_and_emit_report()
+            csv_path = download_coral_report_api(
+                self.start_date_var.get().strip(), self.end_date_var.get().strip(),
+                self.download_dir, log=self.log, should_stop=lambda: self.stop_requested,
+            )
             self.progress_bar.set(0.82)
             result = convert_coral_csv_to_xlsx(
                 csv_path,
@@ -612,295 +701,16 @@ class RoboRelatorioCoralApp(ctk.CTk):
                 except Exception as exc:
                     self.log(f"Nao foi possivel remover CSV original: {exc}")
             messagebox.showinfo("Concluido", f"Relatorio gerado com sucesso:\n{result.output_xlsx}")
+        except ReportCancelled:
+            self.progress_bar.set(0)
+            self.status_var.set("Execucao interrompida pelo usuario.")
         except Exception as exc:
             self.progress_bar.set(0)
             self.status_var.set("Falha na execucao.")
             self.log(f"ERRO: {exc}")
             messagebox.showerror("Erro na execucao", str(exc))
         finally:
-            self._close_driver()
             self._update_action_buttons()
-
-    def _create_driver(self):
-        options = webdriver.ChromeOptions()
-        options.add_argument("--headless=new")
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--log-level=3")
-        prefs = {
-            "download.default_directory": str(self.download_dir),
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-            "safebrowsing.enabled": True,
-        }
-        options.add_experimental_option("prefs", prefs)
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        self.log("Criando sessao do Chrome...")
-        return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-    def _wait_clickable(self, xpath: str, description: str, timeout: int = 30):
-        self.log(f"Aguardando {description} ficar disponivel...")
-        return WebDriverWait(self.driver, timeout).until(EC.element_to_be_clickable((By.XPATH, xpath)))
-
-    def _wait_visible(self, xpath: str, description: str, timeout: int = 30):
-        self.log(f"Aguardando {description} aparecer...")
-        return WebDriverWait(self.driver, timeout).until(EC.visibility_of_element_located((By.XPATH, xpath)))
-
-    def _wait_present(self, xpath: str, description: str, timeout: int = 30):
-        self.log(f"Aguardando {description} existir...")
-        return WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located((By.XPATH, xpath)))
-
-    def _wait_login_completed(self, timeout: int = 90) -> None:
-        self.log("Aguardando confirmacao de login pelo dashboard do Coral...")
-        try:
-            WebDriverWait(self.driver, timeout).until(EC.url_to_be(URL_DASHBOARD_POS_LOGIN))
-        except Exception as exc:
-            current_url = self.driver.current_url
-            raise RuntimeError(
-                "Login nao foi confirmado dentro do tempo limite. "
-                f"URL atual: {current_url}"
-            ) from exc
-        self.log("Login confirmado no dashboard do Coral.")
-
-    def _safe_click(self, xpath: str, description: str, timeout: int = 30) -> None:
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                element = self._wait_clickable(xpath, description, timeout)
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                time.sleep(0.2)
-                try:
-                    element.click()
-                except Exception:
-                    self.driver.execute_script("arguments[0].click();", element)
-                self.log(f"Clique OK em {description}.")
-                return
-            except Exception as exc:
-                last_error = exc
-                self.log(f"Clique falhou em {description} ({attempt}/3): {exc}")
-                time.sleep(1)
-        raise RuntimeError(f"Nao foi possivel clicar em {description}: {last_error}")
-
-    def _safe_click_existing(self, element, description: str) -> None:
-        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.2)
-        try:
-            element.click()
-        except Exception:
-            self.driver.execute_script("arguments[0].click();", element)
-        self.log(f"Clique OK em {description}.")
-
-    def _safe_type(self, xpath: str, text: str, description: str, timeout: int = 30, secret: bool = False) -> None:
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                element = self._wait_clickable(xpath, description, timeout)
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                element.click()
-                element.send_keys(Keys.CONTROL, "a")
-                element.send_keys(Keys.DELETE)
-                element.send_keys(text)
-                self.log(f"Texto digitado em {description}: {'*' * len(text) if secret else text}")
-                return
-            except Exception as exc:
-                last_error = exc
-                self.log(f"Digitacao falhou em {description} ({attempt}/3): {exc}")
-                time.sleep(1)
-        raise RuntimeError(f"Nao foi possivel preencher {description}: {last_error}")
-
-    def _login_coral(self) -> None:
-        self.log("Abrindo Coral...")
-        self.driver.get(URL_CORAL)
-        self._safe_type(XPATH_LOGIN, CORAL_USERNAME, "campo usuario")
-        self._safe_type(XPATH_SENHA, CORAL_PASSWORD, "campo senha", secret=True)
-        self._safe_click(XPATH_ENTRAR, "botao Entrar")
-        self.log("Login enviado.")
-        self._wait_login_completed()
-
-    def _navigate_and_emit_report(self) -> Path:
-        self.log("Acessando pagina de relatorios...")
-        self.driver.get(URL_RELATORIOS)
-        self._wait_present("//foco-app", "aplicacao Coral", timeout=45)
-        self._wait_visible(
-            "//*[contains(normalize-space(.), 'Selecione uma categoria') or contains(normalize-space(.), 'REPORT_GROUP')]",
-            "tela de relatorios",
-            timeout=45,
-        )
-
-        self._select_report_category("Financeiro")
-        self._select_report_name(REPORT_NAME)
-        self._select_coral_period(self.start_date_var.get().strip(), self.end_date_var.get().strip())
-        self._click_export_report()
-        return self._wait_for_csv_download()
-
-    def _select_report_category(self, category: str) -> None:
-        self.log(f"Selecionando categoria do relatorio: {category}")
-        dropdown_xpath = (
-            "(//foco-dropdown[.//button//*[contains(normalize-space(.), 'Selecione uma categoria') "
-            "or contains(normalize-space(.), 'REPORT_GROUP')]])[1]//button[contains(@class, 'dropdown-toggle')]"
-        )
-        self._safe_click(dropdown_xpath, "lista de categorias", timeout=45)
-        option_xpath = (
-            f"//div[contains(@class, 'dropdown-menu') and contains(@class, 'show')]"
-            f"//button[contains(@class, 'dropdown-item')][.//span[normalize-space()='{category}']]"
-        )
-        self._safe_click(option_xpath, f"categoria {category}", timeout=30)
-
-    def _select_report_name(self, report_name: str) -> None:
-        self.log(f"Selecionando relatorio: {report_name}")
-        dropdown_xpath = (
-            "(//foco-dropdown[.//button//*[contains(normalize-space(.), 'Selecione um relat')]])[1]"
-            "//button[contains(@class, 'dropdown-toggle')]"
-        )
-        self._safe_click(dropdown_xpath, "lista de relatorios", timeout=45)
-
-        search_xpath = "//div[contains(@class, 'dropdown-menu') and contains(@class, 'show')]//input[@placeholder='Buscar']"
-        try:
-            self._safe_type(search_xpath, report_name, "busca do relatorio", timeout=8)
-            time.sleep(1)
-        except Exception as exc:
-            self.log(f"Busca do relatorio nao ficou disponivel, tentando lista direta: {exc}")
-
-        option_xpath = (
-            f"//div[contains(@class, 'dropdown-menu') and contains(@class, 'show')]"
-            f"//button[contains(@class, 'dropdown-item')][.//span[normalize-space()='{report_name}']]"
-        )
-        self._safe_click(option_xpath, report_name, timeout=45)
-
-    def _select_coral_period(self, start_date: str, end_date: str) -> None:
-        start = parse_ptbr_date(start_date)
-        end = parse_ptbr_date(end_date)
-        self.log(f"Selecionando periodo no Coral: {start_date} ate {end_date}")
-        self._safe_click("//input[@id='dateRange' or @name='dp']", "campo de periodo", timeout=45)
-        self._click_datepicker_day(start, "data inicial")
-        self._click_datepicker_day(end, "data final")
-        time.sleep(1)
-
-    def _click_datepicker_day(self, target_date: datetime, description: str) -> None:
-        target_label = f"{target_date.day}/{target_date.month}/{target_date.year}"
-        target_xpath = f"//ngb-datepicker//div[@role='gridcell' and @aria-label='{target_label}' and not(contains(@class, 'hidden'))]"
-
-        for attempt in range(1, 25):
-            elements = self.driver.find_elements(By.XPATH, target_xpath)
-            visible_elements = [element for element in elements if element.is_displayed()]
-            if visible_elements:
-                self._safe_click_existing(visible_elements[0], f"{description} {target_label}")
-                return
-            self._move_datepicker_towards(target_date)
-            time.sleep(0.4)
-            self.log(f"Procurando {description} {target_label} no calendario ({attempt}/24)...")
-
-        raise RuntimeError(f"Nao foi possivel selecionar {description}: {target_label}")
-
-    def _move_datepicker_towards(self, target_date: datetime) -> None:
-        visible_months = self.driver.find_elements(By.XPATH, "//ngb-datepicker//div[contains(@class, 'ngb-dp-month-name')]")
-        month_dates: list[datetime] = []
-        month_names = {
-            "janeiro": 1,
-            "fevereiro": 2,
-            "marco": 3,
-            "março": 3,
-            "abril": 4,
-            "maio": 5,
-            "junho": 6,
-            "julho": 7,
-            "agosto": 8,
-            "setembro": 9,
-            "outubro": 10,
-            "novembro": 11,
-            "dezembro": 12,
-        }
-        for element in visible_months:
-            text = element.text.strip().lower()
-            parts = text.split()
-            if len(parts) >= 2 and parts[0] in month_names and parts[-1].isdigit():
-                month_dates.append(datetime(int(parts[-1]), month_names[parts[0]], 1))
-
-        if not month_dates:
-            raise RuntimeError("Nao foi possivel identificar o mes atual do calendario.")
-
-        first_visible = min(month_dates)
-        last_visible = max(month_dates)
-        target_month = datetime(target_date.year, target_date.month, 1)
-        if target_month < first_visible:
-            self._safe_click("//ngb-datepicker//button[@title='Previous month' or @aria-label='Previous month']", "mes anterior", timeout=10)
-        elif target_month > last_visible:
-            self._safe_click("//ngb-datepicker//button[@title='Next month' or @aria-label='Next month']", "proximo mes", timeout=10)
-        else:
-            raise RuntimeError("Mes visivel, mas o dia nao ficou disponivel para clique.")
-
-    def _click_export_report(self) -> None:
-        self.log("Tentando iniciar exportacao do relatorio...")
-        try:
-            self._safe_click(XPATH_GERAR_RELATORIO, "botao Gerar relatorio", timeout=30)
-            return
-        except Exception as exc:
-            self.log(f"XPath principal de Gerar relatorio falhou, tentando fallbacks: {exc}")
-
-        export_candidates = [
-            "//button[.//*[contains(normalize-space(.), 'CSV')] or contains(normalize-space(.), 'CSV')]",
-            "//button[.//*[contains(normalize-space(.), 'Gerar relatório')] or contains(normalize-space(.), 'Gerar relatório')]",
-            "//button[.//*[contains(normalize-space(.), 'Gerar relatorio')] or contains(normalize-space(.), 'Gerar relatorio')]",
-            "//button[contains(normalize-space(.), 'Exportar')]",
-            "//button[contains(normalize-space(.), 'Gerar')]",
-            "//button[contains(normalize-space(.), 'Baixar')]",
-            "//button[contains(normalize-space(.), 'Download')]",
-            "//a[contains(normalize-space(.), 'CSV') or contains(normalize-space(.), 'Exportar') or contains(normalize-space(.), 'Baixar')]",
-        ]
-        last_error = None
-        for xpath in export_candidates:
-            try:
-                self._safe_click(xpath, "botao de exportacao/CSV", timeout=8)
-                return
-            except Exception as exc:
-                last_error = exc
-        raise RuntimeError(
-            "Relatorio e periodo foram selecionados, mas o botao de gerar/exportar CSV ainda nao foi localizado. "
-            f"Ultima falha: {last_error}"
-        )
-
-    def _wait_for_csv_download(self, timeout: int = 120) -> Path:
-        self.log("Aguardando download do CSV...")
-        deadline = time.time() + timeout
-        last_size = -1
-        stable_since = None
-        latest: Path | None = None
-        while time.time() < deadline:
-            csv_files = sorted(self.download_dir.glob("*.csv"), key=lambda path: path.stat().st_mtime, reverse=True)
-            partial_files = list(self.download_dir.glob("*.crdownload"))
-            if csv_files:
-                latest = csv_files[0]
-                size = latest.stat().st_size
-                if size == last_size and not partial_files:
-                    if stable_since is None:
-                        stable_since = time.time()
-                    if time.time() - stable_since >= 2:
-                        self.log(f"CSV baixado: {latest}")
-                        return latest
-                else:
-                    stable_since = None
-                    last_size = size
-            time.sleep(1)
-        raise TimeoutError("O CSV nao foi baixado dentro do tempo limite.")
-
-    def _clean_download_dir(self) -> None:
-        for pattern in ("*.csv", "*.crdownload"):
-            for file_path in self.download_dir.glob(pattern):
-                try:
-                    file_path.unlink()
-                except Exception:
-                    pass
-
-    def _close_driver(self) -> None:
-        if self.driver is None:
-            return
-        try:
-            self.driver.quit()
-        except Exception:
-            pass
-        self.driver = None
 
     def _update_action_buttons(self) -> None:
         running = self.processing_thread is not None and self.processing_thread.is_alive()
