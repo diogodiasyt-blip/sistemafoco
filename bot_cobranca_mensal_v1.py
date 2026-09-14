@@ -14,7 +14,8 @@ import requests
 import getpass
 import unicodedata
 from datetime import date, datetime, time as dt_time, timezone
-from urllib.parse import quote
+from pathlib import Path
+from urllib.parse import quote, urlparse
 
 import pythoncom
 import win32com.client as win32
@@ -159,8 +160,14 @@ class RoboCobrancaMensalApp:
     CORAL_API_WALLET_PAYMENT_URL = (
         f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/wallet-payment"
     )
+    CORAL_API_PAY_BY_LINK_CREATE_URL = f"{CORAL_API_BASE_URL}/api/adyen-pay-by-link/v2/create"
     CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "45"))
     CORAL_WALLET_ENCODE = os.environ.get("CORAL_WALLET_ENCODE", "7HjWayV1f0")
+    API_CHECKPOINT_DIR = (
+        Path(os.environ.get("LOCALAPPDATA") or Path.home())
+        / "SistemaFOCO"
+        / "cobranca_mensal"
+    )
 
     STATUS_AGUARDANDO_DEVOLUCAO = "aguardando devolução"
     STATUS_VENCIDO = "vencido"
@@ -642,8 +649,9 @@ class RoboCobrancaMensalApp:
         self.var_headless = tk.BooleanVar(value=True)
         self.check_headless = ctk.CTkCheckBox(
             config_box,
-            text="Executar em modo invisivel (sem abrir janela do Chrome)",
+            text="Cobranca e links via API (Chrome nao sera aberto)",
             variable=self.var_headless,
+            state="disabled",
             font=("Segoe UI", 13),
             text_color="#303030",
             checkbox_width=22,
@@ -1862,6 +1870,7 @@ class RoboCobrancaMensalApp:
         auth=True,
         retry_auth=True,
         allow_http_error_json=False,
+        extra_headers=None,
     ):
         if auth and not getattr(self, "coral_api_token", ""):
             self._login_coral_api()
@@ -1872,6 +1881,8 @@ class RoboCobrancaMensalApp:
         }
         if auth:
             headers["Authorization"] = f"Bearer {self.coral_api_token}"
+        if extra_headers:
+            headers.update(extra_headers)
 
         try:
             response = requests.request(
@@ -1905,13 +1916,67 @@ class RoboCobrancaMensalApp:
                 auth=auth,
                 retry_auth=False,
                 allow_http_error_json=allow_http_error_json,
+                extra_headers=extra_headers,
             )
         if response.status_code >= 400 and not allow_http_error_json:
             detail = parsed.get("message") or parsed.get("error") or f"HTTP {response.status_code}"
             raise RuntimeError(f"Coral API HTTP {response.status_code}: {detail}")
         return parsed
 
-    def _consultar_contrato_wallet_api(self, numero_contrato):
+    @staticmethod
+    def _texto_campo_api(value):
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("description", "name", "label", "value", "status"):
+                text = RoboCobrancaMensalApp._texto_campo_api(value.get(key))
+                if text:
+                    return text
+        return ""
+
+    @classmethod
+    def _extrair_status_contrato_api(cls, data):
+        reservation = data.get("reservation") if isinstance(data.get("reservation"), dict) else {}
+        for owner in (data, reservation):
+            for key in (
+                "statusDescription",
+                "rentAgreementStatus",
+                "statusRentAgreement",
+                "status",
+            ):
+                text = cls._texto_campo_api(owner.get(key))
+                if text:
+                    return text
+        return ""
+
+    @staticmethod
+    def _extrair_email_cliente_api(customer):
+        for key in ("email", "emailAddress", "customerEmail"):
+            value = customer.get(key)
+            if isinstance(value, str) and "@" in value:
+                return value.strip()
+        emails = customer.get("emails")
+        if isinstance(emails, list):
+            for item in emails:
+                if isinstance(item, str) and "@" in item:
+                    return item.strip()
+                if isinstance(item, dict):
+                    for key in ("email", "address", "value"):
+                        value = item.get(key)
+                        if isinstance(value, str) and "@" in value:
+                            return value.strip()
+        pending = list(customer.values())
+        while pending:
+            value = pending.pop(0)
+            if isinstance(value, str) and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value.strip()):
+                return value.strip()
+            if isinstance(value, dict):
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return ""
+
+    def _consultar_contexto_contrato_api(self, numero_contrato, nome_fallback=""):
         numero_contrato = self.normalizar_contrato(numero_contrato)
         self.adicionar_log(f"Wallet API: consultando contrato {numero_contrato}.")
         response = self._coral_api_json_request(
@@ -1930,8 +1995,45 @@ class RoboCobrancaMensalApp:
             raise RuntimeError(
                 f"Contrato {numero_contrato} nao retornou data.reservation.id para consultar /tokens."
             )
-        self.adicionar_log(f"Wallet API: referencias do contrato {numero_contrato} localizadas.")
-        return documento, reservation_id
+        status = self._extrair_status_contrato_api(data)
+        nome = ""
+        for key in ("name", "fullName", "customerName"):
+            nome = str(customer.get(key) or "").strip()
+            if nome:
+                break
+        nome = nome or str(nome_fallback or "").strip()
+        email = self._extrair_email_cliente_api(customer)
+        self.adicionar_log(
+            f"Coral API: contrato {numero_contrato} consultado; "
+            f"status={status or '<nao informado>'}; email={'localizado' if email else 'ausente'}."
+        )
+        return {
+            "data": data,
+            "documento": documento,
+            "reservation_id": reservation_id,
+            "status": status,
+            "nome": nome,
+            "email": email,
+        }
+
+    def _consultar_contrato_wallet_api(self, numero_contrato):
+        contexto = self._consultar_contexto_contrato_api(numero_contrato)
+        return contexto["documento"], contexto["reservation_id"]
+
+    def _validar_status_contrato_api(self, numero_contrato, status):
+        normalized = self.normalizar_texto(status)
+        waiting_markers = (
+            "aguardando devolucao",
+            "awaiting return",
+            "waiting return",
+            "waiting for return",
+        )
+        if not normalized or not any(marker in normalized for marker in waiting_markers):
+            raise RevisaoManualObrigatoria(
+                f"Status do contrato {numero_contrato} nao confirmado como Aguardando devolucao pela API. "
+                f"Retorno: {status or '<nao informado>'}."
+            )
+        self.adicionar_log(f"Coral API: status validado para {numero_contrato}: {status}.")
 
     def _listar_cartoes_wallet_api(self, documento, reservation_id, numero_contrato):
         self.adicionar_log(f"Wallet API: consultando /tokens para {numero_contrato}.")
@@ -2017,8 +2119,66 @@ class RoboCobrancaMensalApp:
             allow_http_error_json=True,
         )
 
-    def tentar_cobranca_wallet_api(self, numero_contrato, valor_pagamento):
-        documento, reservation_id = self._consultar_contrato_wallet_api(numero_contrato)
+    def _caminho_checkpoint_api(self):
+        return self.API_CHECKPOINT_DIR / f"cobrancas_api_{date.today().strftime('%Y%m%d')}.jsonl"
+
+    def _checkpoint_api_ja_cobrado(self, numero_contrato, valor_pagamento):
+        path = self._caminho_checkpoint_api()
+        if not path.exists():
+            return False
+        expected_contract = self.normalizar_contrato(numero_contrato)
+        expected_value = round(float(self.converter_valor_monetario(valor_pagamento)), 2)
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        event = json.loads(line)
+                    except Exception:
+                        continue
+                    if (
+                        event.get("status") == "COBRADO"
+                        and self.normalizar_contrato(event.get("contrato")) == expected_contract
+                        and abs(float(event.get("valor") or 0) - expected_value) < 0.01
+                    ):
+                        return True
+        except Exception as exc:
+            raise RevisaoManualObrigatoria(
+                f"Nao foi possivel consultar o checkpoint local antes de cobrar {expected_contract}: {exc}"
+            ) from exc
+        return False
+
+    def _registrar_checkpoint_api(self, numero_contrato, valor_pagamento, transaction_id):
+        path = self._caminho_checkpoint_api()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "data_hora": datetime.now().isoformat(timespec="seconds"),
+            "contrato": self.normalizar_contrato(numero_contrato),
+            "valor": round(float(self.converter_valor_monetario(valor_pagamento)), 2),
+            "status": "COBRADO",
+            "transactionId": str(transaction_id or "").strip(),
+        }
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+                handle.flush()
+        except Exception as exc:
+            raise RevisaoManualObrigatoria(
+                f"Pagamento aprovado para {numero_contrato}, mas o checkpoint local nao pôde ser salvo. "
+                f"Nao repita automaticamente: {exc}"
+            ) from exc
+        self.adicionar_log(f"Wallet API: checkpoint local salvo para {numero_contrato}.")
+
+    def tentar_cobranca_wallet_api(self, numero_contrato, valor_pagamento, contexto_api=None):
+        if self._checkpoint_api_ja_cobrado(numero_contrato, valor_pagamento):
+            self.adicionar_log(
+                f"Wallet API: {numero_contrato} ja possui cobranca aprovada no checkpoint de hoje; "
+                "nova tentativa bloqueada."
+            )
+            self.cobrancas_concluidas += 1
+            return True
+        contexto_api = contexto_api or self._consultar_contexto_contrato_api(numero_contrato)
+        documento = contexto_api["documento"]
+        reservation_id = contexto_api["reservation_id"]
         cartoes = self._listar_cartoes_wallet_api(documento, reservation_id, numero_contrato)
         if not cartoes:
             self.adicionar_log(f"Wallet API: contrato {numero_contrato} sem cartoes tokenizados.")
@@ -2031,14 +2191,6 @@ class RoboCobrancaMensalApp:
         for index, cartao in enumerate(cartoes, start=1):
             self.verificar_controle_execucao()
             descricao = self._descricao_cartao_wallet_api(cartao, index)
-            final_cartao = re.sub(r"\D", "", str(cartao.get("cardLastNumber") or ""))[-4:]
-            if final_cartao and self.historico_tem_cobranca_cartao(valor_pagamento, final_cartao):
-                self.adicionar_log(
-                    f"Wallet API: cobranca de hoje ja consta no historico para {descricao}; evitando duplicidade."
-                )
-                self.cobrancas_concluidas += 1
-                return True
-
             self.adicionar_log(
                 f"Wallet API: tentando {descricao} ({index}/{len(cartoes)}), "
                 f"valor R$ {self.formatar_valor_pagamento(valor_pagamento)}, 1x."
@@ -2064,6 +2216,7 @@ class RoboCobrancaMensalApp:
                 self.adicionar_log(
                     f"Wallet API: APROVADO {numero_contrato} | {descricao} | transactionId={transaction_id}"
                 )
+                self._registrar_checkpoint_api(numero_contrato, valor_pagamento, transaction_id)
                 self.cobrancas_concluidas += 1
                 return True
 
@@ -2082,6 +2235,66 @@ class RoboCobrancaMensalApp:
 
         self.adicionar_log("Wallet API: todos os cartoes foram recusados.")
         return False
+
+    def _criar_link_pagamento_api(self, numero_contrato, valor_pagamento, contexto_api):
+        documento = re.sub(r"\D", "", str(contexto_api.get("documento") or ""))
+        nome = str(contexto_api.get("nome") or "").strip()
+        email = str(contexto_api.get("email") or "").strip()
+        valor = self.converter_valor_monetario(valor_pagamento)
+        if not documento:
+            raise RuntimeError(f"Documento ausente para criar o link de {numero_contrato}.")
+        if not nome:
+            raise RuntimeError(f"Nome do cliente ausente para criar o link de {numero_contrato}.")
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            raise RuntimeError(f"E-mail ausente ou invalido para criar o link de {numero_contrato}.")
+        if valor is None or valor <= 0:
+            raise RuntimeError(f"Valor invalido para criar o link de {numero_contrato}.")
+        payload = {
+            "reference": self.normalizar_contrato(numero_contrato),
+            "amount": {"value": round(float(valor), 2)},
+            "isPrePayment": False,
+            "isFromApp": False,
+            "isCheckin": False,
+            "documentNumber": documento,
+            "customerName": nome,
+            "customerEmail": email,
+            "dateInRA": _wallet_payment_date_iso(date.today()),
+            "typePayDue": "due",
+        }
+        self.adicionar_log(
+            f"Pay by Link API: criando link para {numero_contrato}, "
+            f"valor R$ {self.formatar_valor_pagamento(valor)}."
+        )
+        try:
+            response = self._coral_api_json_request(
+                "POST",
+                self.CORAL_API_PAY_BY_LINK_CREATE_URL,
+                payload=payload,
+                extra_headers={
+                    "Origin": "https://coral.aluguefoco.com.br",
+                    "Referer": "https://coral.aluguefoco.com.br/",
+                },
+            )
+        except Exception as exc:
+            raise RevisaoManualObrigatoria(
+                f"Nao foi possivel confirmar a criacao do link para {numero_contrato}. "
+                f"O POST nao sera repetido automaticamente: {exc}"
+            ) from exc
+        data = response.get("data") if isinstance(response, dict) else None
+        link = str(data.get("link") or "").strip() if isinstance(data, dict) else ""
+        parsed = urlparse(link)
+        if (
+            parsed.scheme.lower() != "https"
+            or parsed.hostname != "livecheckout.aluguefoco.com.br"
+            or not parsed.path.startswith("/checkout/")
+        ):
+            raise RevisaoManualObrigatoria(
+                f"Pay by Link retornou link ausente ou inesperado para {numero_contrato}; "
+                "a chamada nao sera repetida automaticamente."
+            )
+        self.links_gerados += 1
+        self.adicionar_log(f"Pay by Link API: link confirmado para {numero_contrato}.")
+        return link
 
     def listar_cartoes_disponiveis(self):
         self.adicionar_log("Localizando cartões disponíveis na aba Carteira...")
@@ -2770,34 +2983,39 @@ Checkout - Foco Aluguel de Carros"""
     # =========================
     # PROCESSAMENTO
     # =========================
-    def processar_contrato_com_cobranca(self, numero_contrato, valor_pagamento):
+    def processar_contrato_com_cobranca(self, numero_contrato, valor_pagamento, nome_cliente=""):
         self.verificar_controle_execucao()
-        self.validar_status_aguardando_devolucao_contrato(numero_contrato)
-        self.abrir_edicao_contrato_direta(numero_contrato)
-        email_cliente = self.coletar_email_cliente_na_edicao()
-        self.ir_para_pagamentos()
+        contexto_api = self._consultar_contexto_contrato_api(numero_contrato, nome_fallback=nome_cliente)
+        self._validar_status_contrato_api(numero_contrato, contexto_api.get("status"))
+        email_cliente = str(contexto_api.get("email") or "").strip()
 
-        sucesso_cartao = self.tentar_cobranca_wallet_api(numero_contrato, valor_pagamento)
+        sucesso_cartao = self.tentar_cobranca_wallet_api(
+            numero_contrato,
+            valor_pagamento,
+            contexto_api=contexto_api,
+        )
 
         if sucesso_cartao:
             return {"tipo": "cartao"}
 
-        self.adicionar_log("Iniciando fluxo alternativo por link de pagamento...")
-        dados_link = self.executar_fluxo_link(valor_pagamento, email_cliente=email_cliente)
+        self.adicionar_log("Pay by Link API: iniciando fluxo alternativo por link de pagamento.")
+        link = self._criar_link_pagamento_api(numero_contrato, valor_pagamento, contexto_api)
         return {
             "tipo": "link",
-            "email": dados_link.get("email", ""),
-            "link": dados_link.get("link", "")
+            "email": email_cliente,
+            "link": link,
         }
 
-    def processar_item_com_isolamento(self, numero_contrato, valor_pagamento):
+    def processar_item_com_isolamento(self, numero_contrato, valor_pagamento, nome_cliente=""):
         for tentativa in range(1, self.MAX_TENTATIVAS_ITEM + 1):
             try:
                 self.verificar_controle_execucao()
                 self.adicionar_log(f"Processando contrato {numero_contrato} - tentativa {tentativa}/{self.MAX_TENTATIVAS_ITEM}")
-                if tentativa > 1:
-                    self.ir_para_contratos()
-                resultado = self.processar_contrato_com_cobranca(numero_contrato, valor_pagamento)
+                resultado = self.processar_contrato_com_cobranca(
+                    numero_contrato,
+                    valor_pagamento,
+                    nome_cliente=nome_cliente,
+                )
                 resultado["tentativas"] = tentativa
                 return resultado
             except RevisaoManualObrigatoria:
@@ -2807,11 +3025,7 @@ Checkout - Foco Aluguel de Carros"""
             except Exception as e:
                 self.adicionar_log(f"Falha no contrato {numero_contrato} na tentativa {tentativa}: {e}")
                 if tentativa < self.MAX_TENTATIVAS_ITEM:
-                    self.adicionar_log("Retornando para a URL base de contratos antes da próxima tentativa.")
-                    try:
-                        self.ir_para_contratos()
-                    except Exception as erro_base:
-                        self.adicionar_log(f"Falha ao retornar para tela base de contratos: {erro_base}")
+                    self.adicionar_log("Renovando o contexto da API antes da proxima tentativa tecnica.")
                     continue
                 raise
 
@@ -2850,13 +3064,12 @@ Checkout - Foco Aluguel de Carros"""
             self.atualizar_resumo_execucao()
 
             usuario = self.entry_usuario.get().strip()
-            self.atualizar_progresso(0, self.total_aptos, "Abrindo sistema")
+            self.atualizar_progresso(0, self.total_aptos, "Autenticando na API")
             self.adicionar_log(f"Usuário informado: {usuario}")
-            self.adicionar_log("Modo invisível ativado." if self.var_headless.get() else "Modo visível ativado.")
+            self.adicionar_log("Fluxo principal configurado para API; o Chrome nao sera aberto.")
 
             self.coral_api_token = ""
             self._login_coral_api(force=True)
-            self.abrir_sistema(relogin=False)
             self.criar_relatorio()
 
             for i, linha in enumerate(self.df_aptos, start=1):
@@ -2888,10 +3101,13 @@ Checkout - Foco Aluguel de Carros"""
                 status_final = ""
                 erro_msg = ""
                 tentativas_item = 0
-                resetar_navegador_apos_relatorio = False
 
                 try:
-                    resultado = self.processar_item_com_isolamento(contrato, valor_cobrar)
+                    resultado = self.processar_item_com_isolamento(
+                        contrato,
+                        valor_cobrar,
+                        nome_cliente=nome,
+                    )
                     tentativas_item = resultado.get("tentativas", 1)
 
                     if resultado.get("tipo") == "cartao":
@@ -2901,7 +3117,6 @@ Checkout - Foco Aluguel de Carros"""
                         self.adicionar_log(f"Contrato {contrato} cobrado com sucesso no cartão.")
                     else:
                         tipo = "Link"
-                        resetar_navegador_apos_relatorio = True
                         status_cobranca = "Sucesso (Link gerado)"
                         email_cliente = resultado.get("email", "").strip()
                         link = resultado.get("link", "").strip()
@@ -2938,7 +3153,6 @@ Checkout - Foco Aluguel de Carros"""
                     status_final = "Revisar Manualmente"
                     erro_msg = str(e)
                     self.adicionar_log(f"REVISÃO MANUAL no contrato {contrato}: {str(e)}")
-                    self.ir_para_contratos()
 
                 except ExecucaoInterrompida as e:
                     tentativas_item = max(tentativas_item, 1)
@@ -2958,7 +3172,6 @@ Checkout - Foco Aluguel de Carros"""
                     self.total_erros_execucao += 1
                     self.atualizar_resumo_execucao()
                     self.adicionar_log(f"ERRO definitivo no contrato {contrato}: {str(e)}")
-                    self.ir_para_contratos()
 
                 finally:
                     telefone = "" if self.valor_vazio(linha.get("Telefone")) else str(linha.get("Telefone")).strip()
@@ -2980,13 +3193,6 @@ Checkout - Foco Aluguel de Carros"""
                         "Erro": erro_msg
                     }
                     self.atualizar_relatorio(dados_relatorio)
-
-                    if resetar_navegador_apos_relatorio and not self.parar_solicitado and i < self.total_aptos:
-                        self.adicionar_log(
-                            "Link gerado deixa o Coral em tela de aguardando pagamento. "
-                            "Retornando para a tela base de contratos antes do próximo contrato..."
-                        )
-                        self.ir_para_contratos()
 
                 if self.parar_solicitado:
                     break
@@ -3015,8 +3221,9 @@ Checkout - Foco Aluguel de Carros"""
             messagebox.showerror("Erro", f"Ocorreu um erro:\n\n{str(e)}")
 
         finally:
-            self.fechar_driver()
-            self.adicionar_log("Navegador encerrado.")
+            if self.driver is not None:
+                self.fechar_driver()
+                self.adicionar_log("Navegador encerrado.")
             self.btn_iniciar.configure(state="normal")
             self.btn_pausar.configure(state="disabled", text="Pausar")
             self.btn_parar.configure(state="disabled")
