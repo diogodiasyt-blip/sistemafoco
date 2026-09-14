@@ -2028,12 +2028,19 @@ class RoboCobrancaMensalApp:
             "waiting return",
             "waiting for return",
         )
-        if not normalized or not any(marker in normalized for marker in waiting_markers):
+        status_aceito = normalized == "open" or any(marker in normalized for marker in waiting_markers)
+        if not status_aceito:
             raise RevisaoManualObrigatoria(
                 f"Status do contrato {numero_contrato} nao confirmado como Aguardando devolucao pela API. "
                 f"Retorno: {status or '<nao informado>'}."
             )
-        self.adicionar_log(f"Coral API: status validado para {numero_contrato}: {status}.")
+        if normalized == "open":
+            self.adicionar_log(
+                f"Coral API: status OPEN validado para {numero_contrato} "
+                "(contrato aberto/aguardando devolucao)."
+            )
+        else:
+            self.adicionar_log(f"Coral API: status validado para {numero_contrato}: {status}.")
 
     def _listar_cartoes_wallet_api(self, documento, reservation_id, numero_contrato):
         self.adicionar_log(f"Wallet API: consultando /tokens para {numero_contrato}.")
