@@ -4,13 +4,16 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import customtkinter as ctk
+import base64
+import hashlib
+import json
 import os
 import re
 import sys
 import requests
 import getpass
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime, time as dt_time, timezone
 from urllib.parse import quote
 
 import pythoncom
@@ -37,6 +40,53 @@ class RevisaoManualObrigatoria(Exception):
 
 class ExecucaoInterrompida(Exception):
     pass
+
+
+def _evp_bytes_to_key_md5(passphrase, salt, key_len=32, iv_len=16):
+    """Compatibilidade com CryptoJS/OpenSSL quando AES.encrypt recebe uma passphrase."""
+    material = b""
+    previous = b""
+    while len(material) < key_len + iv_len:
+        previous = hashlib.md5(previous + passphrase + salt).digest()
+        material += previous
+    return material[:key_len], material[key_len:key_len + iv_len]
+
+
+def _pkcs7_pad(data, block_size=16):
+    padding = block_size - (len(data) % block_size)
+    return data + bytes([padding]) * padding
+
+
+def _cryptojs_aes_encrypt_json(payload, passphrase):
+    """Replica CryptoJS.AES.encrypt(JSON.stringify(payload), passphrase)."""
+    if not passphrase:
+        raise RuntimeError("CORAL_WALLET_ENCODE nao configurado.")
+    plaintext = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    salt = os.urandom(8)
+    key, iv = _evp_bytes_to_key_md5(passphrase.encode("utf-8"), salt)
+    padded = _pkcs7_pad(plaintext)
+    try:
+        from Crypto.Cipher import AES as pycrypto_aes
+
+        ciphertext = pycrypto_aes.new(key, pycrypto_aes.MODE_CBC, iv).encrypt(padded)
+    except ImportError:
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        except ImportError as exc:
+            raise RuntimeError(
+                "Para cobrar pela Wallet API, instale 'cryptography' ou 'pycryptodome'."
+            ) from exc
+        encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        ciphertext = encryptor.update(padded) + encryptor.finalize()
+    return base64.b64encode(b"Salted__" + salt + ciphertext).decode("ascii")
+
+
+def _wallet_payment_date_iso(data_ref=None):
+    """Replica a serializacao do seletor de data do frontend do Coral."""
+    data_ref = data_ref or date.today()
+    local_tz = datetime.now().astimezone().tzinfo
+    local_midnight = datetime.combine(data_ref, dt_time.min, tzinfo=local_tz)
+    return local_midnight.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def localizar_logo():
@@ -97,6 +147,20 @@ class RoboCobrancaMensalApp:
     URL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
     URL_VALIDACAO = "https://raw.githubusercontent.com/diogodiasyt-blip/validacaofoco/refs/heads/main/chave"
     URL_WHATSAPP_WEB = "https://web.whatsapp.com/"
+
+    CORAL_API_BASE_URL = os.environ.get(
+        "CORAL_API_BASE_URL", "https://servicescoral.aluguefoco.com.br"
+    ).rstrip("/")
+    CORAL_API_LOGIN_URL = f"{CORAL_API_BASE_URL}/api/auth/login"
+    CORAL_API_RENT_AGREEMENT_URL = f"{CORAL_API_BASE_URL}/api/rentagreement"
+    CORAL_API_TOKENS_URL = (
+        f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/tokens"
+    )
+    CORAL_API_WALLET_PAYMENT_URL = (
+        f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/wallet-payment"
+    )
+    CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "45"))
+    CORAL_WALLET_ENCODE = os.environ.get("CORAL_WALLET_ENCODE", "7HjWayV1f0")
 
     STATUS_AGUARDANDO_DEVOLUCAO = "aguardando devolução"
     STATUS_VENCIDO = "vencido"
@@ -214,6 +278,8 @@ class RoboCobrancaMensalApp:
         self.whatsapp_item_em_andamento = ""
         self.logo_image = None
         self.popup_edicao_tratado = False
+        self.coral_api_token = ""
+        self.coral_api_token_obtained_at = None
 
         self.configurar_estilo()
         self.criar_interface()
@@ -1762,6 +1828,261 @@ class RoboCobrancaMensalApp:
         except Exception:
             return ""
 
+    def _login_coral_api(self, force=False):
+        if getattr(self, "coral_api_token", "") and not force:
+            return self.coral_api_token
+        usuario = self.entry_usuario.get().strip()
+        senha = self.entry_senha.get().strip()
+        if not usuario or not senha:
+            raise RuntimeError("Informe usuario e senha do Coral antes de iniciar.")
+
+        self.adicionar_log(f"Wallet API: autenticando usuario {usuario}.")
+        response = self._coral_api_json_request(
+            "POST",
+            self.CORAL_API_LOGIN_URL,
+            payload={"login": usuario, "password": senha},
+            auth=False,
+            retry_auth=False,
+        )
+        data = response.get("data") if isinstance(response, dict) else None
+        token = str(data.get("token") or "").strip() if isinstance(data, dict) else ""
+        if not token:
+            raise RuntimeError("Login da API do Coral nao retornou data.token.")
+        self.coral_api_token = token
+        self.coral_api_token_obtained_at = datetime.now()
+        self.adicionar_log("Wallet API: autenticacao confirmada.")
+        return token
+
+    def _coral_api_json_request(
+        self,
+        method,
+        url,
+        *,
+        payload=None,
+        auth=True,
+        retry_auth=True,
+        allow_http_error_json=False,
+    ):
+        if auth and not getattr(self, "coral_api_token", ""):
+            self._login_coral_api()
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "User-Agent": "RoboCobrancaMensal-WalletAPI/1.0",
+        }
+        if auth:
+            headers["Authorization"] = f"Bearer {self.coral_api_token}"
+
+        try:
+            response = requests.request(
+                method.upper(),
+                url,
+                json=payload,
+                headers=headers,
+                timeout=self.CORAL_API_HTTP_TIMEOUT_SECONDS,
+            )
+        except requests.Timeout as exc:
+            raise RuntimeError("Timeout ao comunicar com a API do Coral.") from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Falha de comunicacao com a API do Coral: {exc}") from exc
+
+        try:
+            parsed = response.json() if response.content else {}
+        except ValueError:
+            parsed = {"message": (response.text or "")[:500]}
+        if not isinstance(parsed, dict):
+            parsed = {"data": parsed}
+        parsed.setdefault("_http_status", int(response.status_code))
+
+        if response.status_code == 401 and auth and retry_auth:
+            self.adicionar_log("Wallet API: sessao expirada; renovando o token uma unica vez.")
+            self.coral_api_token = ""
+            self._login_coral_api(force=True)
+            return self._coral_api_json_request(
+                method,
+                url,
+                payload=payload,
+                auth=auth,
+                retry_auth=False,
+                allow_http_error_json=allow_http_error_json,
+            )
+        if response.status_code >= 400 and not allow_http_error_json:
+            detail = parsed.get("message") or parsed.get("error") or f"HTTP {response.status_code}"
+            raise RuntimeError(f"Coral API HTTP {response.status_code}: {detail}")
+        return parsed
+
+    def _consultar_contrato_wallet_api(self, numero_contrato):
+        numero_contrato = self.normalizar_contrato(numero_contrato)
+        self.adicionar_log(f"Wallet API: consultando contrato {numero_contrato}.")
+        response = self._coral_api_json_request(
+            "GET", f"{self.CORAL_API_RENT_AGREEMENT_URL}/{quote(numero_contrato, safe='')}"
+        )
+        data = response.get("data") if isinstance(response, dict) else None
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Consulta do contrato {numero_contrato} nao retornou data valida.")
+        customer = data.get("customer") if isinstance(data.get("customer"), dict) else {}
+        documento = str(customer.get("documentNumber") or "").strip()
+        reservation = data.get("reservation") if isinstance(data.get("reservation"), dict) else {}
+        reservation_id = str(reservation.get("id") or "").strip()
+        if not documento:
+            raise RuntimeError(f"Contrato {numero_contrato} sem CPF/CNPJ para localizar a Wallet.")
+        if not reservation_id:
+            raise RuntimeError(
+                f"Contrato {numero_contrato} nao retornou data.reservation.id para consultar /tokens."
+            )
+        self.adicionar_log(f"Wallet API: referencias do contrato {numero_contrato} localizadas.")
+        return documento, reservation_id
+
+    def _listar_cartoes_wallet_api(self, documento, reservation_id, numero_contrato):
+        self.adicionar_log(f"Wallet API: consultando /tokens para {numero_contrato}.")
+        response = self._coral_api_json_request(
+            "POST",
+            self.CORAL_API_TOKENS_URL,
+            payload={"documentNumber": documento, "reservation": reservation_id},
+        )
+        raw_cards = response.get("data") if isinstance(response, dict) else None
+        if raw_cards is None:
+            raw_cards = []
+        if not isinstance(raw_cards, list):
+            raise RuntimeError(f"/tokens retornou formato inesperado para {numero_contrato}.")
+        cards = []
+        for item in raw_cards:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("token") or "").strip() and str(item.get("adyenCustomerId") or "").strip():
+                cards.append(item)
+        self.adicionar_log(f"Wallet API: {len(cards)} cartao(oes) utilizavel(is) localizado(s).")
+        return cards
+
+    @staticmethod
+    def _descricao_cartao_wallet_api(cartao, index):
+        bandeira = str(cartao.get("cardFlag") or "Cartao").strip().upper() or "CARTAO"
+        final = re.sub(r"\D", "", str(cartao.get("cardLastNumber") or ""))[-4:]
+        return f"{bandeira} final {final}" if final else f"{bandeira} #{index}"
+
+    @staticmethod
+    def _detalhe_resposta_wallet_api(data):
+        result = str(data.get("result") or data.get("status") or "").strip()
+        message = str(data.get("message") or "").strip()
+        refusal_code = str(data.get("refusalReasonCode") or "").strip()
+        technical = str(data.get("technicalReason") or "").strip()
+        parts = []
+        if result:
+            parts.append(f"result={result}")
+        if refusal_code:
+            parts.append(f"refusalReasonCode={refusal_code}")
+        if message:
+            parts.append(f"message={message}")
+        if technical and technical != message:
+            parts.append(f"technicalReason={technical}")
+        return " | ".join(parts) or "resposta sem motivo detalhado"
+
+    @staticmethod
+    def _resposta_wallet_e_recusa_inequivoca(data):
+        status = str(data.get("status") or "").strip().upper()
+        result = str(data.get("result") or "").strip().upper()
+        message = str(data.get("message") or "").strip().upper()
+        return bool(
+            status in {"REFUSED", "DECLINED", "CANCELLED", "ERROR"}
+            or result in {"REFUSED", "DECLINED", "CANCELLED", "ERROR"}
+            or data.get("refusalReasonCode") not in (None, "")
+            or str(data.get("technicalReason") or "").strip()
+            or message.startswith("ADYEN_")
+        )
+
+    def _executar_wallet_payment_api(self, numero_contrato, documento, cartao, valor_pagamento):
+        token = str(cartao.get("token") or "").strip()
+        customer_id = str(cartao.get("adyenCustomerId") or "").strip()
+        if not token or not customer_id:
+            raise RuntimeError("Cartao retornado por /tokens sem identificadores obrigatorios.")
+        valor = self.converter_valor_monetario(valor_pagamento)
+        if valor is None or valor <= 0:
+            raise RuntimeError("Valor de cobranca invalido para a Wallet API.")
+        payload = {
+            "documentNumber": documento,
+            "adyenCustomerId": customer_id,
+            "token": token,
+            "reservation": self.normalizar_contrato(numero_contrato),
+            "paymentCode": 0,
+            "value": round(float(valor), 2),
+            "installments": 1,
+            "datePayment": _wallet_payment_date_iso(date.today()),
+            "isWallet": True,
+        }
+        encrypted = _cryptojs_aes_encrypt_json(payload, self.CORAL_WALLET_ENCODE)
+        return self._coral_api_json_request(
+            "POST",
+            self.CORAL_API_WALLET_PAYMENT_URL,
+            payload={"data": encrypted},
+            allow_http_error_json=True,
+        )
+
+    def tentar_cobranca_wallet_api(self, numero_contrato, valor_pagamento):
+        documento, reservation_id = self._consultar_contrato_wallet_api(numero_contrato)
+        cartoes = self._listar_cartoes_wallet_api(documento, reservation_id, numero_contrato)
+        if not cartoes:
+            self.adicionar_log(f"Wallet API: contrato {numero_contrato} sem cartoes tokenizados.")
+            return False
+
+        descricoes = [self._descricao_cartao_wallet_api(card, i) for i, card in enumerate(cartoes, start=1)]
+        self.adicionar_log(
+            f"Wallet API: {len(cartoes)} cartao(oes) localizado(s): {', '.join(descricoes)}."
+        )
+        for index, cartao in enumerate(cartoes, start=1):
+            self.verificar_controle_execucao()
+            descricao = self._descricao_cartao_wallet_api(cartao, index)
+            final_cartao = re.sub(r"\D", "", str(cartao.get("cardLastNumber") or ""))[-4:]
+            if final_cartao and self.historico_tem_cobranca_cartao(valor_pagamento, final_cartao):
+                self.adicionar_log(
+                    f"Wallet API: cobranca de hoje ja consta no historico para {descricao}; evitando duplicidade."
+                )
+                self.cobrancas_concluidas += 1
+                return True
+
+            self.adicionar_log(
+                f"Wallet API: tentando {descricao} ({index}/{len(cartoes)}), "
+                f"valor R$ {self.formatar_valor_pagamento(valor_pagamento)}, 1x."
+            )
+            try:
+                response = self._executar_wallet_payment_api(
+                    numero_contrato, documento, cartao, valor_pagamento
+                )
+            except Exception as exc:
+                raise RevisaoManualObrigatoria(
+                    f"Resposta da tentativa em {descricao} ficou indeterminada. "
+                    f"Nenhum outro cartao sera tentado: {exc}"
+                ) from exc
+
+            http_status = int(response.get("_http_status", 200) or 200)
+            raw_data = response.get("data") if isinstance(response, dict) else None
+            data = raw_data if isinstance(raw_data, dict) else response
+            if not isinstance(data, dict):
+                data = {}
+            status = str(data.get("status") or "").strip()
+            transaction_id = str(data.get("transactionId") or "").strip()
+            if status == "Authorised" and transaction_id:
+                self.adicionar_log(
+                    f"Wallet API: APROVADO {numero_contrato} | {descricao} | transactionId={transaction_id}"
+                )
+                self.cobrancas_concluidas += 1
+                return True
+
+            if http_status >= 500 or http_status in {408, 425, 429}:
+                raise RevisaoManualObrigatoria(
+                    f"Wallet API retornou HTTP {http_status} apos a tentativa em {descricao}. "
+                    "Resultado indeterminado; os demais cartoes nao serao tentados."
+                )
+            detalhe = self._detalhe_resposta_wallet_api(data)
+            if not self._resposta_wallet_e_recusa_inequivoca(data):
+                raise RevisaoManualObrigatoria(
+                    f"Wallet API retornou resultado nao reconhecido em {descricao}: {detalhe}. "
+                    "Os demais cartoes nao serao tentados."
+                )
+            self.adicionar_log(f"Wallet API: RECUSADO em {descricao}: {detalhe}")
+
+        self.adicionar_log("Wallet API: todos os cartoes foram recusados.")
+        return False
+
     def listar_cartoes_disponiveis(self):
         self.adicionar_log("Localizando cartões disponíveis na aba Carteira...")
         WebDriverWait(self.driver, self.TIMEOUT_PADRAO).until(
@@ -2455,9 +2776,8 @@ Checkout - Foco Aluguel de Carros"""
         self.abrir_edicao_contrato_direta(numero_contrato)
         email_cliente = self.coletar_email_cliente_na_edicao()
         self.ir_para_pagamentos()
-        self.clicar_carteira()
 
-        sucesso_cartao = self.tentar_cobranca_em_todos_os_cartoes(valor_pagamento)
+        sucesso_cartao = self.tentar_cobranca_wallet_api(numero_contrato, valor_pagamento)
 
         if sucesso_cartao:
             return {"tipo": "cartao"}
@@ -2534,6 +2854,8 @@ Checkout - Foco Aluguel de Carros"""
             self.adicionar_log(f"Usuário informado: {usuario}")
             self.adicionar_log("Modo invisível ativado." if self.var_headless.get() else "Modo visível ativado.")
 
+            self.coral_api_token = ""
+            self._login_coral_api(force=True)
             self.abrir_sistema(relogin=False)
             self.criar_relatorio()
 
