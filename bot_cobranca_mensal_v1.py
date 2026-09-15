@@ -20,19 +20,16 @@ from urllib.parse import quote, urlparse
 import pythoncom
 import win32com.client as win32
 from openpyxl import Workbook, load_workbook
+from PIL import Image
 try:
     import keyring
 except Exception:
     keyring = None
 
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 class RevisaoManualObrigatoria(Exception):
@@ -134,15 +131,20 @@ class RoboCobrancaMensalApp:
     OUTLOOK_FOLDER_SENT = 5
     OUTLOOK_SEND_CONFIRM_TIMEOUT_SECONDS = 30
     OUTLOOK_SEND_CONFIRM_POLL_SECONDS = 2
-    MAIN_BG = "#f6f4f1"
+    MAIN_BG = "#f4f6f8"
     CARD_BG = "#ffffff"
-    CARD_BORDER = "#eadfdb"
-    PRIMARY_TEXT = "#d81919"
-    MUTED_TEXT = "#5c5c5c"
-    BUTTON_BG = "#ef1a14"
-    BUTTON_ACTIVE_BG = "#c91410"
-    SUCCESS_TEXT = "#187a2f"
-    SOFT_RED = "#fff1ef"
+    CARD_BORDER = "#e3e7ec"
+    PRIMARY_TEXT = "#18212f"
+    MUTED_TEXT = "#667085"
+    BUTTON_BG = "#e1262f"
+    BUTTON_ACTIVE_BG = "#bd1d25"
+    SUCCESS_TEXT = "#16804a"
+    SOFT_RED = "#fff0f1"
+    SIDEBAR_BG = "#181c24"
+    SIDEBAR_MUTED = "#aeb6c4"
+    INPUT_BG = "#f8fafc"
+    INFO_BLUE = "#2764d8"
+    WARNING_TEXT = "#b54708"
 
     URL_BASE = "https://coral.aluguefoco.com.br/"
     URL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
@@ -161,6 +163,7 @@ class RoboCobrancaMensalApp:
         f"{CORAL_API_BASE_URL}/api/payment/integration/adyen-ecommerce-payment/wallet-payment"
     )
     CORAL_API_PAY_BY_LINK_CREATE_URL = f"{CORAL_API_BASE_URL}/api/adyen-pay-by-link/v2/create"
+    CORAL_API_WHATSAPP_SEND_URL = f"{CORAL_API_BASE_URL}/api/messenger/whatsapp/send"
     CORAL_API_HTTP_TIMEOUT_SECONDS = int(os.environ.get("CORAL_API_HTTP_TIMEOUT_SECONDS", "45"))
     CORAL_WALLET_ENCODE = os.environ.get("CORAL_WALLET_ENCODE", "7HjWayV1f0")
     API_CHECKPOINT_DIR = (
@@ -246,9 +249,9 @@ class RoboCobrancaMensalApp:
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
         self.root = root
-        self.root.title("Robô de Cobrança Mensal - Desenvolvido por Diogo Medeiros © 2026")
-        self.root.geometry("980x760")
-        self.root.minsize(900, 700)
+        self.root.title("Central de Cobrança | Sistema FOCO")
+        self.root.geometry("940x720")
+        self.root.minsize(860, 660)
         self.root.configure(bg=self.MAIN_BG)
 
         self.planilha_path = ""
@@ -275,6 +278,7 @@ class RoboCobrancaMensalApp:
         self.links_gerados = 0
         self.total_cartao_sucesso = 0
         self.total_email_sucesso = 0
+        self.total_whatsapp_sucesso = 0
         self.total_erros_execucao = 0
         self.whatsapp_enviados = 0
         self.pausado = False
@@ -321,9 +325,14 @@ class RoboCobrancaMensalApp:
         if not caminho_logo:
             return None
         try:
-            logo = tk.PhotoImage(file=caminho_logo)
-            if reducao > 1:
-                logo = logo.subsample(reducao, reducao)
+            imagem = Image.open(caminho_logo)
+            largura = max(1, imagem.width // max(1, reducao))
+            altura = max(1, imagem.height // max(1, reducao))
+            logo = ctk.CTkImage(
+                light_image=imagem,
+                dark_image=imagem,
+                size=(largura, altura),
+            )
             self.logo_image = logo
             return logo
         except Exception:
@@ -369,7 +378,7 @@ class RoboCobrancaMensalApp:
         self.report_columns = [
             "Contrato", "Nome", "Telefone", "Valor a Cobrar", "Descricao Cobranca",
             "Tipo", "Status Cobranca", "Tentativas", "Link", "Email Cliente",
-            "Status Email", "Status Final", "Data/Hora", "Erro"
+            "Status Email", "Status WhatsApp", "Status Final", "Data/Hora", "Erro"
         ]
         self.report_rows = []
         self.salvar_relatorio()
@@ -378,7 +387,6 @@ class RoboCobrancaMensalApp:
     def atualizar_relatorio(self, dados):
         self.report_rows.append(dados)
         self.salvar_relatorio()
-        self.atualizar_base_whatsapp_da_cobranca()
         self.adicionar_log(f"Relatório atualizado (Contrato {dados.get('Contrato', '')})")
 
     def salvar_relatorio(self):
@@ -521,306 +529,727 @@ class RoboCobrancaMensalApp:
         self.entry_senha.delete(0, "end")
         messagebox.showinfo("Limpar acesso", "Acesso removido deste computador.")
 
-    def criar_secao_card(self, parent, titulo):
+    def criar_secao_card(self, parent, titulo, subtitulo=""):
         frame = ctk.CTkFrame(
             parent,
             fg_color=self.CARD_BG,
-            corner_radius=22,
+            corner_radius=14,
             border_width=1,
             border_color=self.CARD_BORDER,
         )
-        frame.pack(fill="x", padx=8, pady=(0, 14))
+        cabecalho = ctk.CTkFrame(frame, fg_color="transparent")
+        cabecalho.pack(fill="x", padx=18, pady=(14, 10))
         ctk.CTkLabel(
-            frame,
+            cabecalho,
             text=titulo,
             text_color=self.PRIMARY_TEXT,
-            font=("Segoe UI", 18, "bold"),
-        ).pack(anchor="w", padx=18, pady=(16, 12))
+            font=("Segoe UI", 15, "bold"),
+        ).pack(anchor="w")
+        if subtitulo:
+            ctk.CTkLabel(
+                cabecalho,
+                text=subtitulo,
+                text_color=self.MUTED_TEXT,
+                font=("Segoe UI", 12),
+                justify="left",
+                wraplength=290,
+            ).pack(anchor="w", pady=(4, 0))
         return frame
 
-    def criar_interface(self):
-        container = ctk.CTkFrame(self.root, fg_color=self.MAIN_BG, corner_radius=0)
-        container.pack(fill="both", expand=True, padx=12, pady=12)
-
-        scroll = ctk.CTkScrollableFrame(container, fg_color=self.MAIN_BG, corner_radius=0)
-        scroll.pack(fill="both", expand=True)
-
-        hero = ctk.CTkFrame(
-            scroll,
+    def criar_kpi_card(self, parent, rotulo, valor_inicial, cor_destaque):
+        card = ctk.CTkFrame(
+            parent,
             fg_color=self.CARD_BG,
-            corner_radius=26,
+            corner_radius=14,
             border_width=1,
             border_color=self.CARD_BORDER,
         )
-        hero.pack(fill="x", padx=8, pady=(8, 14))
+        accent = ctk.CTkFrame(
+            card,
+            width=5,
+            height=40,
+            fg_color=cor_destaque,
+            corner_radius=999,
+        )
+        accent.pack(side="left", padx=(0, 0), pady=10)
+        accent.pack_propagate(False)
+        conteudo = ctk.CTkFrame(card, fg_color="transparent")
+        conteudo.pack(side="left", fill="both", expand=True, padx=14, pady=10)
+        ctk.CTkLabel(
+            conteudo,
+            text=rotulo.upper(),
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w")
+        label = ctk.CTkLabel(
+            conteudo,
+            text=valor_inicial,
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 14, "bold"),
+            anchor="w",
+            justify="left",
+            wraplength=165,
+        )
+        label.pack(fill="x", pady=(3, 0))
+        return card, label
 
-        hero_inner = ctk.CTkFrame(hero, fg_color="transparent")
-        hero_inner.pack(fill="x", padx=24, pady=24)
+    def _criar_interface_anterior(self):
+        shell = ctk.CTkFrame(self.root, fg_color=self.MAIN_BG, corner_radius=0)
+        shell.pack(fill="both", expand=True)
+
+        sidebar = ctk.CTkFrame(shell, width=248, fg_color=self.SIDEBAR_BG, corner_radius=0)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        marca = ctk.CTkFrame(sidebar, fg_color="transparent")
+        marca.pack(fill="x", padx=24, pady=(30, 24))
         logo = self.carregar_logo(reducao=2)
         if logo:
-            ctk.CTkLabel(hero_inner, text="", image=logo).pack(side="left", padx=(0, 18))
+            ctk.CTkLabel(marca, text="", image=logo).pack(anchor="w", pady=(0, 18))
+        ctk.CTkLabel(
+            marca,
+            text="CENTRAL DE\nCOBRANÇA",
+            text_color="#ffffff",
+            font=("Segoe UI", 24, "bold"),
+            justify="left",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            marca,
+            text="Mensal  •  Quinzenal",
+            text_color=self.SIDEBAR_MUTED,
+            font=("Segoe UI", 12),
+        ).pack(anchor="w", pady=(8, 0))
 
-        header_texto = ctk.CTkFrame(hero_inner, fg_color="transparent")
+        api_badge = ctk.CTkFrame(sidebar, fg_color="#203b31", corner_radius=12)
+        api_badge.pack(fill="x", padx=24, pady=(0, 28))
+        ctk.CTkLabel(
+            api_badge,
+            text="FLUXO 100% API",
+            text_color="#85e0b1",
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w", padx=14, pady=(11, 2))
+        ctk.CTkLabel(
+            api_badge,
+            text="Operação sem navegador",
+            text_color="#c7d9d0",
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", padx=14, pady=(0, 11))
+
+        fluxo = ctk.CTkFrame(sidebar, fg_color="transparent")
+        fluxo.pack(fill="x", padx=24)
+        ctk.CTkLabel(
+            fluxo,
+            text="FLUXO OPERACIONAL",
+            text_color="#7f8999",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", pady=(0, 12))
+        for numero, texto in (
+            ("01", "Validar a campanha"),
+            ("02", "Processar cartões"),
+            ("03", "Gerar links"),
+            ("04", "Enviar comunicações"),
+        ):
+            linha = ctk.CTkFrame(fluxo, fg_color="transparent")
+            linha.pack(fill="x", pady=6)
+            ctk.CTkLabel(
+                linha,
+                text=numero,
+                width=30,
+                height=26,
+                corner_radius=8,
+                fg_color="#292f3a",
+                text_color="#d7dce4",
+                font=("Segoe UI", 10, "bold"),
+            ).pack(side="left")
+            ctk.CTkLabel(
+                linha,
+                text=texto,
+                text_color="#d7dce4",
+                font=("Segoe UI", 12),
+            ).pack(side="left", padx=(10, 0))
+
+        ctk.CTkLabel(
+            sidebar,
+            text="SISTEMA FOCO\nFinanceiro  •  v1.1.19",
+            text_color="#7f8999",
+            font=("Segoe UI", 10),
+            justify="left",
+        ).pack(side="bottom", anchor="w", padx=24, pady=26)
+
+        main = ctk.CTkScrollableFrame(
+            shell,
+            fg_color=self.MAIN_BG,
+            corner_radius=0,
+            scrollbar_button_color="#cfd5dc",
+            scrollbar_button_hover_color="#aeb7c2",
+        )
+        main.pack(side="left", fill="both", expand=True)
+
+        conteudo = ctk.CTkFrame(main, fg_color="transparent")
+        conteudo.pack(fill="both", expand=True, padx=28, pady=26)
+
+        header = ctk.CTkFrame(conteudo, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 20))
+        header_texto = ctk.CTkFrame(header, fg_color="transparent")
         header_texto.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
             header_texto,
-            text="Cobranca FOCO",
+            text="Operação de cobrança",
             text_color=self.PRIMARY_TEXT,
-            font=("Segoe UI", 30, "bold"),
+            font=("Segoe UI", 29, "bold"),
         ).pack(anchor="w")
         ctk.CTkLabel(
             header_texto,
-            text="Cobranca, link, e-mail e WhatsApp em um unico fluxo operacional.",
+            text="Configure a campanha, carregue a base e acompanhe o processamento em tempo real.",
             text_color=self.MUTED_TEXT,
-            font=("Segoe UI", 14),
-        ).pack(anchor="w", pady=(6, 0))
+            font=("Segoe UI", 13),
+        ).pack(anchor="w", pady=(5, 0))
+        status = ctk.CTkFrame(header, fg_color="#eaf7f0", corner_radius=12)
+        status.pack(side="right", padx=(16, 0))
         ctk.CTkLabel(
-            header_texto,
-            text="OPERACAO FINANCEIRA",
-            text_color="#a65f56",
-            font=("Segoe UI", 12, "bold"),
-        ).pack(anchor="w", pady=(10, 0))
+            status,
+            text="SISTEMA PRONTO",
+            text_color=self.SUCCESS_TEXT,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(padx=16, pady=10)
 
-        self.notebook = ctk.CTkTabview(
-            scroll,
-            fg_color="transparent",
-            segmented_button_fg_color="#f0dfda",
-            segmented_button_selected_color=self.BUTTON_BG,
-            segmented_button_selected_hover_color=self.BUTTON_ACTIVE_BG,
-            text_color="#303030",
+        configuracao = ctk.CTkFrame(conteudo, fg_color="transparent")
+        configuracao.pack(fill="x", pady=(0, 14))
+        configuracao.grid_columnconfigure((0, 1), weight=1, uniform="config")
+
+        frame_login = self.criar_secao_card(
+            configuracao,
+            "Acesso ao Coral",
+            "Credenciais utilizadas somente para autenticação segura na API.",
         )
-        self.notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.notebook.add("Cobranca")
-        self.notebook.add("WhatsApp")
-
-        aba_cobranca = self.notebook.tab("Cobranca")
-        aba_whatsapp = self.notebook.tab("WhatsApp")
-
-        topo_cobranca = ctk.CTkFrame(aba_cobranca, fg_color="transparent")
-        topo_cobranca.pack(fill="x", pady=(0, 6))
-
-        frame_login = self.criar_secao_card(topo_cobranca, "Acesso ao Sistema")
-        frame_login.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=(0, 10))
+        frame_login.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
         login_grid = ctk.CTkFrame(frame_login, fg_color="transparent")
-        login_grid.pack(fill="x", padx=18, pady=(0, 18))
-        login_grid.grid_columnconfigure((0, 1), weight=1)
-        ctk.CTkLabel(login_grid, text="Usuario", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 6))
-        ctk.CTkLabel(login_grid, text="Senha", font=("Segoe UI", 13, "bold"), text_color="#303030").grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(0, 6))
-        self.entry_usuario = ctk.CTkEntry(login_grid, height=42, corner_radius=12)
-        self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 10))
-        self.entry_senha = ctk.CTkEntry(login_grid, height=42, corner_radius=12, show="*")
-        self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+        login_grid.pack(fill="x", padx=22, pady=(0, 22))
+        login_grid.grid_columnconfigure((0, 1), weight=1, uniform="login")
+        ctk.CTkLabel(login_grid, text="Usuário", font=("Segoe UI", 12, "bold"), text_color=self.PRIMARY_TEXT).grid(row=0, column=0, sticky="w", padx=(0, 7), pady=(0, 6))
+        ctk.CTkLabel(login_grid, text="Senha", font=("Segoe UI", 12, "bold"), text_color=self.PRIMARY_TEXT).grid(row=0, column=1, sticky="w", padx=(7, 0), pady=(0, 6))
+        self.entry_usuario = ctk.CTkEntry(
+            login_grid,
+            height=44,
+            corner_radius=10,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Usuário Coral",
+        )
+        self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 7))
+        self.entry_senha = ctk.CTkEntry(
+            login_grid,
+            height=44,
+            corner_radius=10,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Senha",
+            show="*",
+        )
+        self.entry_senha.grid(row=1, column=1, sticky="ew", padx=(7, 0))
         credenciais_box = ctk.CTkFrame(login_grid, fg_color="transparent")
-        credenciais_box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        credenciais_box.grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
         ctk.CTkButton(
             credenciais_box,
             text="Salvar acesso",
             command=self.salvar_credenciais,
             height=36,
-            width=145,
-            corner_radius=12,
-            fg_color="#ffffff",
-            text_color=self.PRIMARY_TEXT,
-            hover_color=self.SOFT_RED,
-            border_width=1,
-            border_color="#f0d7d2",
-            font=("Segoe UI", 13, "bold"),
-        ).pack(side="left", padx=(0, 10))
+            width=132,
+            corner_radius=9,
+            fg_color=self.PRIMARY_TEXT,
+            hover_color="#2a3545",
+            font=("Segoe UI", 12, "bold"),
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             credenciais_box,
-            text="Limpar acesso",
+            text="Limpar",
             command=self.limpar_credenciais,
             height=36,
-            width=145,
-            corner_radius=12,
+            width=92,
+            corner_radius=9,
             fg_color="#ffffff",
-            text_color=self.PRIMARY_TEXT,
-            hover_color=self.SOFT_RED,
+            text_color=self.MUTED_TEXT,
+            hover_color="#f0f2f5",
             border_width=1,
-            border_color="#f0d7d2",
-            font=("Segoe UI", 13, "bold"),
+            border_color=self.CARD_BORDER,
+            font=("Segoe UI", 12, "bold"),
         ).pack(side="left")
         self.carregar_credenciais_salvas()
 
-        frame_config = self.criar_secao_card(topo_cobranca, "Configuracoes")
-        frame_config.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=(0, 10))
-        config_box = ctk.CTkFrame(frame_config, fg_color="transparent")
-        config_box.pack(fill="x", padx=18, pady=(0, 18))
-        self.var_headless = tk.BooleanVar(value=True)
-        self.check_headless = ctk.CTkCheckBox(
-            config_box,
-            text="Cobranca e links via API (Chrome nao sera aberto)",
-            variable=self.var_headless,
-            state="disabled",
-            font=("Segoe UI", 13),
-            text_color="#303030",
-            checkbox_width=22,
-            checkbox_height=22,
-            corner_radius=8,
+        frame_config = self.criar_secao_card(
+            configuracao,
+            "Configuração da campanha",
+            "Escolha a régua correta e defina uma cópia opcional dos e-mails.",
         )
-        self.check_headless.pack(anchor="w", pady=(0, 10))
-        ctk.CTkLabel(config_box, text="E-mail em copia (opcional)", font=("Segoe UI", 13, "bold"), text_color="#303030").pack(anchor="w", pady=(0, 6))
-        self.entry_email_copia = ctk.CTkEntry(config_box, height=42, corner_radius=12)
-        self.entry_email_copia.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(config_box, text="Modalidade para validar antes de iniciar", font=("Segoe UI", 13, "bold"), text_color="#303030").pack(anchor="w", pady=(0, 6))
+        frame_config.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+        config_grid = ctk.CTkFrame(frame_config, fg_color="transparent")
+        config_grid.pack(fill="x", padx=22, pady=(0, 22))
+        config_grid.grid_columnconfigure((0, 1), weight=1, uniform="campaign")
+        ctk.CTkLabel(config_grid, text="Modalidade", font=("Segoe UI", 12, "bold"), text_color=self.PRIMARY_TEXT).grid(row=0, column=0, sticky="w", padx=(0, 7), pady=(0, 6))
+        ctk.CTkLabel(config_grid, text="E-mail em cópia", font=("Segoe UI", 12, "bold"), text_color=self.PRIMARY_TEXT).grid(row=0, column=1, sticky="w", padx=(7, 0), pady=(0, 6))
         self.var_modalidade = tk.StringVar(value=self.MODALIDADE_MENSAL)
         self.combo_modalidade = ctk.CTkComboBox(
-            config_box,
+            config_grid,
             variable=self.var_modalidade,
             values=[self.MODALIDADE_MENSAL, self.MODALIDADE_QUINZENAL],
             state="readonly",
-            height=42,
-            corner_radius=12,
+            height=44,
+            corner_radius=10,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            button_color=self.PRIMARY_TEXT,
+            button_hover_color="#2a3545",
             command=lambda _valor: self.ao_alterar_modalidade(),
         )
-        self.combo_modalidade.pack(anchor="w")
+        self.combo_modalidade.grid(row=1, column=0, sticky="ew", padx=(0, 7))
+        self.entry_email_copia = ctk.CTkEntry(
+            config_grid,
+            height=44,
+            corner_radius=10,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Opcional",
+        )
+        self.entry_email_copia.grid(row=1, column=1, sticky="ew", padx=(7, 0))
+        ctk.CTkLabel(
+            config_grid,
+            text="Cartões, links e comunicações são processados integralmente pelas APIs do Coral.",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 11),
+            justify="left",
+            wraplength=280,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
-        meio_cobranca = ctk.CTkFrame(aba_cobranca, fg_color="transparent")
-        meio_cobranca.pack(fill="x", pady=(0, 6))
-
-        frame_planilha = self.criar_secao_card(meio_cobranca, "Planilha Base")
-        frame_planilha.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=(0, 10))
+        frame_planilha = self.criar_secao_card(
+            conteudo,
+            "Base da campanha",
+            "Selecione a planilha validada que contém os contratos aptos para processamento.",
+        )
+        frame_planilha.pack(fill="x", pady=(0, 14))
         planilha_box = ctk.CTkFrame(frame_planilha, fg_color="transparent")
-        planilha_box.pack(fill="x", padx=18, pady=(0, 18))
+        planilha_box.pack(fill="x", padx=22, pady=(0, 22))
         self.btn_planilha = ctk.CTkButton(
             planilha_box,
-            text="Selecionar Planilha Excel",
+            text="Selecionar planilha",
             command=self.selecionar_planilha,
             height=44,
-            width=240,
-            corner_radius=14,
+            width=178,
+            corner_radius=10,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 13, "bold"),
+        )
+        self.btn_planilha.pack(side="left", padx=(0, 18))
+        info_planilha = ctk.CTkFrame(planilha_box, fg_color="transparent")
+        info_planilha.pack(side="left", fill="x", expand=True)
+        self.label_planilha = ctk.CTkLabel(
+            info_planilha,
+            text="Nenhuma planilha selecionada",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 12),
+            anchor="w",
+            justify="left",
+        )
+        self.label_planilha.pack(fill="x")
+        self.label_aptos = ctk.CTkLabel(
+            info_planilha,
+            text=f"0 contratos aptos para cobrança {self.var_modalidade.get().lower()}",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 13, "bold"),
+            anchor="w",
+            justify="left",
+        )
+        self.label_aptos.pack(fill="x", pady=(5, 0))
+
+        resumo = ctk.CTkFrame(conteudo, fg_color="transparent")
+        resumo.pack(fill="x", pady=(0, 14))
+        resumo.grid_columnconfigure((0, 1, 2), weight=1, uniform="kpi")
+        card_cartao, self.label_total_cartao = self.criar_kpi_card(
+            resumo, "Cartão", "0 aprovadas", self.SUCCESS_TEXT
+        )
+        card_cartao.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        card_comunicacao, self.label_total_email = self.criar_kpi_card(
+            resumo, "Comunicações", "E-mail 0\nWhatsApp 0", self.INFO_BLUE
+        )
+        card_comunicacao.grid(row=0, column=1, sticky="nsew", padx=7)
+        card_erros, self.label_total_erros = self.criar_kpi_card(
+            resumo, "Atenção", "0 com erro", self.BUTTON_BG
+        )
+        card_erros.grid(row=0, column=2, sticky="nsew", padx=(7, 0))
+
+        operacao = ctk.CTkFrame(conteudo, fg_color="transparent")
+        operacao.pack(fill="both", expand=True)
+        operacao.grid_columnconfigure(0, weight=1)
+        operacao.grid_columnconfigure(1, weight=2)
+
+        frame_execucao = self.criar_secao_card(
+            operacao,
+            "Execução",
+            "O processamento pode ser pausado ou interrompido em pontos seguros.",
+        )
+        frame_execucao.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+        exec_box = ctk.CTkFrame(frame_execucao, fg_color="transparent")
+        exec_box.pack(fill="both", expand=True, padx=22, pady=(0, 22))
+        self.label_progresso = ctk.CTkLabel(
+            exec_box,
+            text="0/0  •  Aguardando início",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 13, "bold"),
+            anchor="w",
+        )
+        self.label_progresso.pack(fill="x", pady=(0, 10))
+        self.progress = BarraProgressoAdapter(
+            ctk.CTkProgressBar(
+                exec_box,
+                height=10,
+                corner_radius=999,
+                progress_color=self.BUTTON_BG,
+                fg_color="#e7eaee",
+            )
+        )
+        self.progress.pack(fill="x", pady=(0, 20))
+        self.progress.widget.set(0)
+        self.btn_iniciar = ctk.CTkButton(
+            exec_box,
+            text="Iniciar processamento",
+            command=self.iniciar_robo,
+            height=48,
+            corner_radius=11,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 14, "bold"),
+        )
+        self.btn_iniciar.pack(fill="x", pady=(0, 9))
+        controles = ctk.CTkFrame(exec_box, fg_color="transparent")
+        controles.pack(fill="x")
+        controles.grid_columnconfigure((0, 1), weight=1, uniform="controls")
+        self.btn_pausar = ctk.CTkButton(
+            controles,
+            text="Pausar",
+            command=self.alternar_pausa,
+            state="disabled",
+            height=42,
+            corner_radius=10,
             fg_color="#ffffff",
             text_color=self.PRIMARY_TEXT,
+            hover_color="#f0f2f5",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.btn_pausar.grid(row=0, column=0, sticky="ew", padx=(0, 5))
+        self.btn_parar = ctk.CTkButton(
+            controles,
+            text="Interromper",
+            command=self.solicitar_parada,
+            state="disabled",
+            height=42,
+            corner_radius=10,
+            fg_color="#ffffff",
+            text_color=self.BUTTON_BG,
             hover_color=self.SOFT_RED,
             border_width=1,
-            border_color="#f0d7d2",
-            font=("Segoe UI", 14, "bold"),
+            border_color="#f1c9cc",
+            font=("Segoe UI", 12, "bold"),
         )
-        self.btn_planilha.pack(anchor="center", pady=(0, 10))
-        self.label_planilha = ctk.CTkLabel(planilha_box, text="Nenhuma planilha selecionada", text_color="#2f64d6", font=("Segoe UI", 12), anchor="w", justify="left")
-        self.label_planilha.pack(fill="x", pady=(0, 8))
-        self.label_aptos = ctk.CTkLabel(planilha_box, text=f"Contratos aptos para cobranca ({self.var_modalidade.get()}): 0", text_color="#303030", font=("Segoe UI", 14, "bold"), anchor="w", justify="left")
-        self.label_aptos.pack(fill="x")
+        self.btn_parar.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
-        frame_resumo_execucao = self.criar_secao_card(aba_cobranca, "Resumo da Execucao")
-        frame_resumo_execucao.pack(fill="x", padx=8, pady=(0, 10))
-        resumo_box = ctk.CTkFrame(frame_resumo_execucao, fg_color="transparent")
-        resumo_box.pack(fill="x", padx=18, pady=(0, 18))
-        resumo_box.grid_columnconfigure((0, 1, 2), weight=1)
-
-        self.label_total_cartao = ctk.CTkLabel(
-            resumo_box,
-            text="Cobrados no cartao: 0",
-            text_color=self.SUCCESS_TEXT,
-            font=("Segoe UI", 14, "bold"),
-            anchor="w"
+        frame_logs = self.criar_secao_card(
+            operacao,
+            "Atividade em tempo real",
+            "Eventos técnicos e resultados da campanha atual.",
         )
-        self.label_total_cartao.grid(row=0, column=0, sticky="ew", padx=(0, 12), pady=4)
-
-        self.label_total_email = ctk.CTkLabel(
-            resumo_box,
-            text="Links enviados por e-mail: 0",
-            text_color="#1f5fbf",
-            font=("Segoe UI", 14, "bold"),
-            anchor="w"
-        )
-        self.label_total_email.grid(row=0, column=1, sticky="ew", padx=12, pady=4)
-
-        self.label_total_erros = ctk.CTkLabel(
-            resumo_box,
-            text="Contratos com erro: 0",
-            text_color=self.PRIMARY_TEXT,
-            font=("Segoe UI", 14, "bold"),
-            anchor="w"
-        )
-        self.label_total_erros.grid(row=0, column=2, sticky="ew", padx=(12, 0), pady=4)
-
-        lateral_execucao = self.criar_secao_card(meio_cobranca, "Execucao")
-        lateral_execucao.pack(side="left", fill="both", padx=(6, 0), pady=(0, 10))
-        exec_box = ctk.CTkFrame(lateral_execucao, fg_color="transparent")
-        exec_box.pack(fill="both", padx=18, pady=(0, 18))
-        self.progress = BarraProgressoAdapter(
-            ctk.CTkProgressBar(exec_box, height=16, corner_radius=999, progress_color=self.BUTTON_BG, fg_color="#f2dfdb")
-        )
-        self.progress.pack(fill="x", pady=(0, 10))
-        self.progress.widget.set(0)
-        self.label_progresso = ctk.CTkLabel(exec_box, text="0/0 - Aguardando inicio...", text_color=self.MUTED_TEXT, font=("Segoe UI", 13))
-        self.label_progresso.pack(pady=(0, 12))
-        self.btn_iniciar = ctk.CTkButton(exec_box, text="INICIAR ROBO", command=self.iniciar_robo, height=48, corner_radius=14, fg_color=self.BUTTON_BG, hover_color=self.BUTTON_ACTIVE_BG, font=("Segoe UI", 15, "bold"))
-        self.btn_iniciar.pack(fill="x", pady=(0, 6))
-        self.btn_pausar = ctk.CTkButton(exec_box, text="Pausar", command=self.alternar_pausa, state="disabled", height=46, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
-        self.btn_pausar.pack(fill="x", pady=6)
-        self.btn_parar = ctk.CTkButton(exec_box, text="Parar", command=self.solicitar_parada, state="disabled", height=46, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
-        self.btn_parar.pack(fill="x", pady=(6, 0))
-
-        frame_logs = self.criar_secao_card(aba_cobranca, "Logs em Tempo Real")
+        frame_logs.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
         logs_box = ctk.CTkFrame(frame_logs, fg_color="transparent")
-        logs_box.pack(fill="both", expand=True, padx=18, pady=(0, 18))
-        self.txt_logs = ctk.CTkTextbox(logs_box, height=260, corner_radius=16, fg_color="#fffaf9", border_width=1, border_color=self.CARD_BORDER, text_color="#2d2d2d", font=("Consolas", 12))
+        logs_box.pack(fill="both", expand=True, padx=22, pady=(0, 22))
+        self.txt_logs = ctk.CTkTextbox(
+            logs_box,
+            height=230,
+            corner_radius=12,
+            fg_color="#151922",
+            border_width=0,
+            text_color="#d9e0e9",
+            font=("Consolas", 11),
+            scrollbar_button_color="#3b4350",
+            scrollbar_button_hover_color="#505a69",
+        )
         self.txt_logs.pack(fill="both", expand=True)
         self.txt_logs.configure(state="disabled")
 
-        frame_info_whatsapp = self.criar_secao_card(aba_whatsapp, "Autenticacao do WhatsApp Web")
-        info_box = ctk.CTkFrame(frame_info_whatsapp, fg_color="transparent")
-        info_box.pack(fill="x", padx=18, pady=(0, 18))
-        ctk.CTkLabel(
-            info_box,
-            text="Selecione o relatorio gerado pela cobranca. O robo abrira o WhatsApp Web, aguardara a autenticacao e enviara as mensagens com o mesmo texto do e-mail.",
-            text_color=self.MUTED_TEXT,
-            font=("Segoe UI", 13),
-            justify="left",
-            wraplength=900,
-        ).pack(anchor="w")
+    def criar_interface(self):
+        shell = ctk.CTkFrame(self.root, fg_color=self.MAIN_BG, corner_radius=0)
+        shell.pack(fill="both", expand=True)
 
-        frame_relatorio_whatsapp = self.criar_secao_card(aba_whatsapp, "Relatorio Base da Cobranca")
-        relatorio_box = ctk.CTkFrame(frame_relatorio_whatsapp, fg_color="transparent")
-        relatorio_box.pack(fill="x", padx=18, pady=(0, 18))
-        self.btn_relatorio_whatsapp = ctk.CTkButton(
-            relatorio_box,
-            text="Selecionar Relatorio da Cobranca",
-            command=self.selecionar_relatorio_whatsapp,
-            height=44,
-            width=280,
-            corner_radius=14,
+        header = ctk.CTkFrame(shell, fg_color="#ffffff", corner_radius=0, height=68)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        logo = self.carregar_logo(reducao=2)
+        if logo:
+            ctk.CTkLabel(header, text="", image=logo).pack(side="left", padx=(24, 18))
+        titulo_box = ctk.CTkFrame(header, fg_color="transparent")
+        titulo_box.pack(side="left", fill="y", pady=10)
+        ctk.CTkLabel(
+            titulo_box,
+            text="Cobrança",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 23, "bold"),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            titulo_box,
+            text="Mensal e Quinzenal",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 11),
+        ).pack(anchor="w", pady=(1, 0))
+        ctk.CTkLabel(
+            header,
+            text="100% API",
+            fg_color=self.SOFT_RED,
+            text_color=self.BUTTON_BG,
+            corner_radius=10,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="right", padx=24, ipadx=12, ipady=7)
+        ctk.CTkFrame(shell, height=3, fg_color=self.BUTTON_BG, corner_radius=0).pack(fill="x")
+
+        main = ctk.CTkScrollableFrame(
+            shell,
+            fg_color=self.MAIN_BG,
+            corner_radius=0,
+            scrollbar_button_color="#d7d7d7",
+            scrollbar_button_hover_color="#bdbdbd",
+        )
+        main.pack(fill="both", expand=True)
+        conteudo = ctk.CTkFrame(main, fg_color="transparent")
+        conteudo.pack(fill="both", expand=True, padx=18, pady=12)
+
+        frame_config = self.criar_secao_card(conteudo, "Configuração")
+        frame_config.pack(fill="x", pady=(0, 8))
+        config = ctk.CTkFrame(frame_config, fg_color="transparent")
+        config.pack(fill="x", padx=18, pady=(0, 17))
+        config.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="config")
+
+        for coluna, texto in enumerate(("Usuário", "Senha", "Modalidade", "E-mail em cópia")):
+            ctk.CTkLabel(
+                config,
+                text=texto,
+                text_color=self.PRIMARY_TEXT,
+                font=("Segoe UI", 11, "bold"),
+            ).grid(row=0, column=coluna, sticky="w", padx=(0 if coluna == 0 else 5, 5), pady=(0, 5))
+
+        self.entry_usuario = ctk.CTkEntry(
+            config,
+            height=40,
+            corner_radius=9,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Usuário Coral",
+        )
+        self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 5))
+        self.entry_senha = ctk.CTkEntry(
+            config,
+            height=40,
+            corner_radius=9,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Senha",
+            show="*",
+        )
+        self.entry_senha.grid(row=1, column=1, sticky="ew", padx=5)
+        self.var_modalidade = tk.StringVar(value=self.MODALIDADE_MENSAL)
+        self.combo_modalidade = ctk.CTkComboBox(
+            config,
+            variable=self.var_modalidade,
+            values=[self.MODALIDADE_MENSAL, self.MODALIDADE_QUINZENAL],
+            state="readonly",
+            height=40,
+            corner_radius=9,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            button_color=self.BUTTON_BG,
+            button_hover_color=self.BUTTON_ACTIVE_BG,
+            command=lambda _valor: self.ao_alterar_modalidade(),
+        )
+        self.combo_modalidade.grid(row=1, column=2, sticky="ew", padx=5)
+        self.entry_email_copia = ctk.CTkEntry(
+            config,
+            height=40,
+            corner_radius=9,
+            fg_color=self.INPUT_BG,
+            border_color=self.CARD_BORDER,
+            placeholder_text="Opcional",
+        )
+        self.entry_email_copia.grid(row=1, column=3, sticky="ew", padx=(5, 0))
+
+        acesso = ctk.CTkFrame(config, fg_color="transparent")
+        acesso.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        ctk.CTkButton(
+            acesso,
+            text="Salvar acesso",
+            command=self.salvar_credenciais,
+            height=32,
+            width=112,
+            corner_radius=8,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left", padx=(0, 7))
+        ctk.CTkButton(
+            acesso,
+            text="Limpar",
+            command=self.limpar_credenciais,
+            height=32,
+            width=76,
+            corner_radius=8,
+            fg_color="#ffffff",
+            text_color=self.MUTED_TEXT,
+            hover_color="#f1f1f1",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+        self.carregar_credenciais_salvas()
+
+        frame_planilha = self.criar_secao_card(conteudo, "Planilha")
+        frame_planilha.pack(fill="x", pady=(0, 8))
+        planilha = ctk.CTkFrame(frame_planilha, fg_color="transparent")
+        planilha.pack(fill="x", padx=18, pady=(0, 17))
+        self.btn_planilha = ctk.CTkButton(
+            planilha,
+            text="Selecionar arquivo",
+            command=self.selecionar_planilha,
+            height=38,
+            width=142,
+            corner_radius=9,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.btn_planilha.pack(side="left", padx=(0, 14))
+        planilha_info = ctk.CTkFrame(planilha, fg_color="transparent")
+        planilha_info.pack(side="left", fill="x", expand=True)
+        self.label_planilha = ctk.CTkLabel(
+            planilha_info,
+            text="Nenhuma planilha selecionada",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 11),
+            anchor="w",
+        )
+        self.label_planilha.pack(fill="x")
+        self.label_aptos = ctk.CTkLabel(
+            planilha_info,
+            text="0 contratos aptos",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 12, "bold"),
+            anchor="w",
+        )
+        self.label_aptos.pack(fill="x", pady=(2, 0))
+
+        resumo = ctk.CTkFrame(conteudo, fg_color="transparent")
+        resumo.pack(fill="x", pady=(0, 8))
+        resumo.grid_columnconfigure((0, 1, 2), weight=1, uniform="kpi")
+        card_cartao, self.label_total_cartao = self.criar_kpi_card(
+            resumo, "Cartão", "0 aprovadas", self.BUTTON_BG
+        )
+        card_cartao.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        card_comunicacao, self.label_total_email = self.criar_kpi_card(
+            resumo, "Comunicações", "E-mail 0\nWhatsApp 0", self.BUTTON_BG
+        )
+        card_comunicacao.grid(row=0, column=1, sticky="nsew", padx=5)
+        card_erros, self.label_total_erros = self.criar_kpi_card(
+            resumo, "Erros", "0 com erro", self.BUTTON_BG
+        )
+        card_erros.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+
+        operacao = ctk.CTkFrame(conteudo, fg_color="transparent")
+        operacao.pack(fill="both", expand=True)
+        operacao.grid_columnconfigure(0, weight=1)
+        operacao.grid_columnconfigure(1, weight=2)
+
+        frame_execucao = self.criar_secao_card(operacao, "Execução")
+        frame_execucao.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        exec_box = ctk.CTkFrame(frame_execucao, fg_color="transparent")
+        exec_box.pack(fill="both", expand=True, padx=18, pady=(0, 17))
+        self.label_progresso = ctk.CTkLabel(
+            exec_box,
+            text="0/0  •  Aguardando",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        )
+        self.label_progresso.pack(fill="x", pady=(0, 8))
+        self.progress = BarraProgressoAdapter(
+            ctk.CTkProgressBar(
+                exec_box,
+                height=8,
+                corner_radius=999,
+                progress_color=self.BUTTON_BG,
+                fg_color="#ededed",
+            )
+        )
+        self.progress.pack(fill="x", pady=(0, 14))
+        self.progress.widget.set(0)
+        self.btn_iniciar = ctk.CTkButton(
+            exec_box,
+            text="Iniciar",
+            command=self.iniciar_robo,
+            height=42,
+            corner_radius=9,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.btn_iniciar.pack(fill="x", pady=(0, 7))
+        controles = ctk.CTkFrame(exec_box, fg_color="transparent")
+        controles.pack(fill="x")
+        controles.grid_columnconfigure((0, 1), weight=1, uniform="controle")
+        self.btn_pausar = ctk.CTkButton(
+            controles,
+            text="Pausar",
+            command=self.alternar_pausa,
+            state="disabled",
+            height=36,
+            corner_radius=8,
             fg_color="#ffffff",
             text_color=self.PRIMARY_TEXT,
+            hover_color="#f1f1f1",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.btn_pausar.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.btn_parar = ctk.CTkButton(
+            controles,
+            text="Parar",
+            command=self.solicitar_parada,
+            state="disabled",
+            height=36,
+            corner_radius=8,
+            fg_color="#ffffff",
+            text_color=self.BUTTON_BG,
             hover_color=self.SOFT_RED,
             border_width=1,
-            border_color="#f0d7d2",
-            font=("Segoe UI", 14, "bold"),
+            border_color="#efc8cb",
+            font=("Segoe UI", 10, "bold"),
         )
-        self.btn_relatorio_whatsapp.pack(anchor="center", pady=(0, 10))
-        self.label_relatorio_whatsapp = ctk.CTkLabel(relatorio_box, text="Nenhum relatorio selecionado", text_color="#2f64d6", font=("Segoe UI", 12), anchor="w", justify="left")
-        self.label_relatorio_whatsapp.pack(fill="x", pady=(0, 8))
-        self.label_whatsapp_aptos = ctk.CTkLabel(relatorio_box, text="Contratos aptos para envio no WhatsApp: 0", text_color="#303030", font=("Segoe UI", 14, "bold"), anchor="w", justify="left")
-        self.label_whatsapp_aptos.pack(fill="x")
+        self.btn_parar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        frame_progresso_whatsapp = self.criar_secao_card(aba_whatsapp, "Progresso do WhatsApp")
-        progresso_box_whatsapp = ctk.CTkFrame(frame_progresso_whatsapp, fg_color="transparent")
-        progresso_box_whatsapp.pack(fill="x", padx=18, pady=(0, 18))
-        self.progress_whatsapp = BarraProgressoAdapter(
-            ctk.CTkProgressBar(progresso_box_whatsapp, height=16, corner_radius=999, progress_color=self.BUTTON_BG, fg_color="#f2dfdb")
+        frame_logs = self.criar_secao_card(operacao, "Log")
+        frame_logs.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        logs_box = ctk.CTkFrame(frame_logs, fg_color="transparent")
+        logs_box.pack(fill="both", expand=True, padx=18, pady=(0, 17))
+        self.txt_logs = ctk.CTkTextbox(
+            logs_box,
+            height=130,
+            corner_radius=9,
+            fg_color="#fafafa",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            text_color="#353535",
+            font=("Consolas", 10),
+            scrollbar_button_color="#d8d8d8",
+            scrollbar_button_hover_color="#bdbdbd",
         )
-        self.progress_whatsapp.pack(fill="x", pady=(0, 10))
-        self.progress_whatsapp.widget.set(0)
-        self.label_progresso_whatsapp = ctk.CTkLabel(progresso_box_whatsapp, text="0/0 - Aguardando inicio...", text_color=self.MUTED_TEXT, font=("Segoe UI", 13))
-        self.label_progresso_whatsapp.pack()
-
-        frame_botoes_whatsapp = ctk.CTkFrame(aba_whatsapp, fg_color="transparent")
-        frame_botoes_whatsapp.pack(fill="x", padx=8, pady=(0, 10))
-        self.btn_iniciar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="INICIAR WHATSAPP", command=self.iniciar_robo_whatsapp, height=48, width=220, corner_radius=14, fg_color=self.BUTTON_BG, hover_color=self.BUTTON_ACTIVE_BG, font=("Segoe UI", 15, "bold"))
-        self.btn_iniciar_whatsapp.pack(side="left", padx=(0, 10))
-        self.btn_pausar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="Pausar", command=self.alternar_pausa_whatsapp, state="disabled", height=46, width=150, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
-        self.btn_pausar_whatsapp.pack(side="left", padx=10)
-        self.btn_parar_whatsapp = ctk.CTkButton(frame_botoes_whatsapp, text="Parar", command=self.solicitar_parada_whatsapp, state="disabled", height=46, width=150, corner_radius=14, fg_color="#ffffff", text_color=self.PRIMARY_TEXT, hover_color=self.SOFT_RED, border_width=1, border_color="#f0d7d2", font=("Segoe UI", 14, "bold"))
-        self.btn_parar_whatsapp.pack(side="left", padx=(10, 0))
-
-        frame_logs_whatsapp = self.criar_secao_card(aba_whatsapp, "Logs do WhatsApp")
-        logs_box_whatsapp = ctk.CTkFrame(frame_logs_whatsapp, fg_color="transparent")
-        logs_box_whatsapp.pack(fill="both", expand=True, padx=18, pady=(0, 18))
-        self.txt_logs_whatsapp = ctk.CTkTextbox(logs_box_whatsapp, height=240, corner_radius=16, fg_color="#fffaf9", border_width=1, border_color=self.CARD_BORDER, text_color="#2d2d2d", font=("Consolas", 12))
-        self.txt_logs_whatsapp.pack(fill="both", expand=True)
-        self.txt_logs_whatsapp.configure(state="disabled")
+        self.txt_logs.pack(fill="both", expand=True)
+        self.txt_logs.configure(state="disabled")
 
     # =========================
     # LOGS / PROGRESSO
@@ -846,16 +1275,20 @@ class RoboCobrancaMensalApp:
 
     def atualizar_logs_periodicamente(self):
         self.processar_fila_logs(self.log_queue, self.txt_logs)
-        self.processar_fila_logs(self.whatsapp_log_queue, self.txt_logs_whatsapp)
         self.root.after(200, self.atualizar_logs_periodicamente)
 
     def atualizar_resumo_execucao(self):
         if hasattr(self, "label_total_cartao"):
-            self.label_total_cartao.configure(text=f"Cobrados no cartao: {self.total_cartao_sucesso}")
+            self.label_total_cartao.configure(text=f"{self.total_cartao_sucesso} aprovadas")
         if hasattr(self, "label_total_email"):
-            self.label_total_email.configure(text=f"Links enviados por e-mail: {self.total_email_sucesso}")
+            self.label_total_email.configure(
+                text=(
+                    f"E-mail {self.total_email_sucesso}\n"
+                    f"WhatsApp {self.total_whatsapp_sucesso}"
+                )
+            )
         if hasattr(self, "label_total_erros"):
-            self.label_total_erros.configure(text=f"Contratos com erro: {self.total_erros_execucao}")
+            self.label_total_erros.configure(text=f"{self.total_erros_execucao} com erro")
         self.root.update_idletasks()
 
     def atualizar_progresso(self, atual, total, texto_extra=""):
@@ -863,7 +1296,7 @@ class RoboCobrancaMensalApp:
         self.progress["value"] = percentual
         texto = f"{atual}/{total}"
         if texto_extra:
-            texto += f" — {texto_extra}"
+            texto += f"  •  {texto_extra}"
         self.label_progresso.configure(text=texto)
         self.root.update_idletasks()
 
@@ -1128,7 +1561,12 @@ class RoboCobrancaMensalApp:
 
     def atualizar_interface_planilha(self):
         self.label_planilha.configure(text=self.planilha_path or "Nenhuma planilha selecionada")
-        self.label_aptos.configure(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): {self.total_aptos}")
+        self.label_aptos.configure(
+            text=(
+                f"{self.total_aptos} contratos aptos  •  "
+                f"{self.var_modalidade.get()}"
+            )
+        )
         self.atualizar_progresso(0, self.total_aptos, "Planilha carregada" if self.total_aptos > 0 else "Sem contratos aptos")
 
     def registrar_resumo_planilha(self):
@@ -1162,7 +1600,9 @@ class RoboCobrancaMensalApp:
         self.df_aptos = []
         self.total_aptos = 0
         self.label_planilha.configure(text="Nenhuma planilha selecionada")
-        self.label_aptos.configure(text=f"Contratos aptos para cobrança ({self.var_modalidade.get()}): 0")
+        self.label_aptos.configure(
+            text=f"0 contratos aptos  •  {self.var_modalidade.get()}"
+        )
         self.atualizar_progresso(0, 0, "Erro na leitura da planilha")
 
     def selecionar_planilha(self):
@@ -1295,20 +1735,9 @@ class RoboCobrancaMensalApp:
     # DRIVER / SESSÃO
     # =========================
     def configurar_driver(self):
-        options = Options()
-        if self.var_headless.get():
-            options.add_argument("--headless=new")
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--log-level=3")
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=options
+        raise RuntimeError(
+            "A automacao por navegador foi desativada. O fluxo de cobranca opera somente por API."
         )
-        driver.set_page_load_timeout(self.TIMEOUT_LONGO)
-        return driver
 
     def criar_driver_se_necessario(self):
         if self.driver is None:
@@ -1330,18 +1759,9 @@ class RoboCobrancaMensalApp:
         self.criar_driver_se_necessario()
 
     def configurar_driver_whatsapp(self):
-        options = Options()
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--log-level=3")
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=options
+        raise RuntimeError(
+            "O WhatsApp Web foi aposentado. Os links sao enviados diretamente pela API do Coral."
         )
-        driver.set_page_load_timeout(self.TIMEOUT_LONGO)
-        return driver
 
     def criar_driver_whatsapp_se_necessario(self):
         if self.whatsapp_driver is None:
@@ -1976,7 +2396,22 @@ class RoboCobrancaMensalApp:
                 pending.extend(value)
         return ""
 
-    def _consultar_contexto_contrato_api(self, numero_contrato, nome_fallback=""):
+    @classmethod
+    def _extrair_telefone_cliente_api(cls, data, fallback=""):
+        customer = data.get("customer") if isinstance(data.get("customer"), dict) else {}
+        reservation = data.get("reservation") if isinstance(data.get("reservation"), dict) else {}
+        for owner in (customer, reservation, data):
+            for key in (
+                "phone1", "phone", "mobilePhone", "cellPhone", "phoneNumber", "phone2"
+            ):
+                value = cls._texto_campo_api(owner.get(key))
+                if re.sub(r"\D", "", value):
+                    return value
+        return str(fallback or "").strip()
+
+    def _consultar_contexto_contrato_api(
+        self, numero_contrato, nome_fallback="", telefone_fallback=""
+    ):
         numero_contrato = self.normalizar_contrato(numero_contrato)
         self.adicionar_log(f"Wallet API: consultando contrato {numero_contrato}.")
         response = self._coral_api_json_request(
@@ -2003,9 +2438,11 @@ class RoboCobrancaMensalApp:
                 break
         nome = nome or str(nome_fallback or "").strip()
         email = self._extrair_email_cliente_api(customer)
+        telefone = self._extrair_telefone_cliente_api(data, fallback=telefone_fallback)
         self.adicionar_log(
             f"Coral API: contrato {numero_contrato} consultado; "
-            f"status={status or '<nao informado>'}; email={'localizado' if email else 'ausente'}."
+            f"status={status or '<nao informado>'}; email={'localizado' if email else 'ausente'}; "
+            f"telefone={'localizado' if telefone else 'ausente'}."
         )
         return {
             "data": data,
@@ -2014,6 +2451,7 @@ class RoboCobrancaMensalApp:
             "status": status,
             "nome": nome,
             "email": email,
+            "telefone": telefone,
         }
 
     def _consultar_contrato_wallet_api(self, numero_contrato):
@@ -2302,6 +2740,89 @@ class RoboCobrancaMensalApp:
         self.links_gerados += 1
         self.adicionar_log(f"Pay by Link API: link confirmado para {numero_contrato}.")
         return link
+
+    def _normalizar_telefone_messenger_coral(self, telefone):
+        digits = re.sub(r"\D", "", str(telefone or ""))
+        if digits.startswith("0"):
+            digits = digits[1:]
+        if digits.startswith("55"):
+            nacional = digits[2:]
+        else:
+            nacional = digits
+        if len(nacional) == 10:
+            nacional = nacional[:2] + "9" + nacional[2:]
+        if len(nacional) != 11:
+            return ""
+        return f"055{nacional}"
+
+    def _enviar_link_whatsapp_coral_api(self, numero_contrato, link, contexto_api):
+        contrato = self.normalizar_contrato(numero_contrato)
+        telefone = self._normalizar_telefone_messenger_coral(contexto_api.get("telefone"))
+        nome = str(contexto_api.get("nome") or "").strip()
+        if not telefone:
+            erro = "Telefone ausente ou invalido para envio pelo WhatsApp do Coral."
+            self.adicionar_log(f"WhatsApp Coral API: NAO ENVIADO para {contrato}: {erro}")
+            return {"status": "Não Enviado", "erro": erro}
+        if not nome:
+            erro = "Nome do cliente ausente para envio pelo WhatsApp do Coral."
+            self.adicionar_log(f"WhatsApp Coral API: NAO ENVIADO para {contrato}: {erro}")
+            return {"status": "Não Enviado", "erro": erro}
+
+        payload = {
+            "phone": telefone,
+            "link": str(link or "").strip(),
+            "name": nome,
+            "type": 0,
+            "rentAgreementId": contrato,
+            "activeNewPBL": True,
+        }
+        self.adicionar_log(f"WhatsApp Coral API: enviando link para {contrato}.")
+        try:
+            response = self._coral_api_json_request(
+                "POST",
+                self.CORAL_API_WHATSAPP_SEND_URL,
+                payload=payload,
+                auth=False,
+                allow_http_error_json=True,
+                extra_headers={
+                    "Origin": "https://coral.aluguefoco.com.br",
+                    "Referer": "https://coral.aluguefoco.com.br/",
+                },
+            )
+        except Exception as exc:
+            erro = (
+                "Resultado indeterminado no envio do WhatsApp pelo Coral; "
+                f"o POST nao sera repetido automaticamente: {exc}"
+            )
+            self.adicionar_log(f"WhatsApp Coral API: RESULTADO INDETERMINADO para {contrato}.")
+            return {"status": "Resultado Indeterminado", "erro": erro}
+
+        http_status = int(response.get("_http_status", 200) or 200)
+        data = response.get("data") if isinstance(response, dict) else None
+        result = data.get("result") if isinstance(data, dict) else None
+        notification = result.get("notification") if isinstance(result, dict) else None
+        notification_id = (
+            str(notification.get("_id") or "").strip() if isinstance(notification, dict) else ""
+        )
+        if 200 <= http_status < 300 and notification_id:
+            self.adicionar_log(f"WhatsApp Coral API: ENVIADO com sucesso para {contrato}.")
+            return {
+                "status": "Enviado com Sucesso",
+                "erro": "",
+                "notification_id": notification_id,
+            }
+
+        detalhe = str(response.get("message") or response.get("error") or "").strip()
+        if http_status >= 400:
+            erro = f"WhatsApp Coral API retornou HTTP {http_status}"
+            if detalhe:
+                erro += f": {detalhe}"
+            self.adicionar_log(f"WhatsApp Coral API: ERRO NO ENVIO para {contrato} (HTTP {http_status}).")
+            return {"status": "Erro no Envio", "erro": erro}
+
+        erro = "Resposta do WhatsApp Coral sem confirmacao de notificacao."
+        self.adicionar_log(f"WhatsApp Coral API: RESULTADO INDETERMINADO para {contrato}.")
+        return {"status": "Resultado Indeterminado", "erro": erro}
 
     def listar_cartoes_disponiveis(self):
         self.adicionar_log("Localizando cartões disponíveis na aba Carteira...")
@@ -2990,9 +3511,15 @@ Checkout - Foco Aluguel de Carros"""
     # =========================
     # PROCESSAMENTO
     # =========================
-    def processar_contrato_com_cobranca(self, numero_contrato, valor_pagamento, nome_cliente=""):
+    def processar_contrato_com_cobranca(
+        self, numero_contrato, valor_pagamento, nome_cliente="", telefone_cliente=""
+    ):
         self.verificar_controle_execucao()
-        contexto_api = self._consultar_contexto_contrato_api(numero_contrato, nome_fallback=nome_cliente)
+        contexto_api = self._consultar_contexto_contrato_api(
+            numero_contrato,
+            nome_fallback=nome_cliente,
+            telefone_fallback=telefone_cliente,
+        )
         self._validar_status_contrato_api(numero_contrato, contexto_api.get("status"))
         email_cliente = str(contexto_api.get("email") or "").strip()
 
@@ -3007,13 +3534,22 @@ Checkout - Foco Aluguel de Carros"""
 
         self.adicionar_log("Pay by Link API: iniciando fluxo alternativo por link de pagamento.")
         link = self._criar_link_pagamento_api(numero_contrato, valor_pagamento, contexto_api)
+        resultado_whatsapp = self._enviar_link_whatsapp_coral_api(
+            numero_contrato,
+            link,
+            contexto_api,
+        )
         return {
             "tipo": "link",
             "email": email_cliente,
             "link": link,
+            "status_whatsapp": resultado_whatsapp.get("status", "Resultado Indeterminado"),
+            "erro_whatsapp": resultado_whatsapp.get("erro", ""),
         }
 
-    def processar_item_com_isolamento(self, numero_contrato, valor_pagamento, nome_cliente=""):
+    def processar_item_com_isolamento(
+        self, numero_contrato, valor_pagamento, nome_cliente="", telefone_cliente=""
+    ):
         for tentativa in range(1, self.MAX_TENTATIVAS_ITEM + 1):
             try:
                 self.verificar_controle_execucao()
@@ -3022,6 +3558,7 @@ Checkout - Foco Aluguel de Carros"""
                     numero_contrato,
                     valor_pagamento,
                     nome_cliente=nome_cliente,
+                    telefone_cliente=telefone_cliente,
                 )
                 resultado["tentativas"] = tentativa
                 return resultado
@@ -3067,6 +3604,7 @@ Checkout - Foco Aluguel de Carros"""
             self.links_gerados = 0
             self.total_cartao_sucesso = 0
             self.total_email_sucesso = 0
+            self.total_whatsapp_sucesso = 0
             self.total_erros_execucao = 0
             self.atualizar_resumo_execucao()
 
@@ -3087,6 +3625,7 @@ Checkout - Foco Aluguel de Carros"""
                 valor_cobrar = linha.get("R$ a Cobrar", "")
                 mensalidade = linha.get("Mensalidade", "")
                 vencimento = str(linha.get("Vencimento", "")).strip()
+                telefone = "" if self.valor_vazio(linha.get("Telefone")) else str(linha.get("Telefone")).strip()
 
                 valor_cobrar_log = self.formatar_valor_pagamento(valor_cobrar)
                 mensalidade_log = self.formatar_valor_pagamento(mensalidade)
@@ -3105,6 +3644,7 @@ Checkout - Foco Aluguel de Carros"""
                 link = ""
                 email_cliente = ""
                 status_email = "Não Aplicável"
+                status_whatsapp = "Não Aplicável"
                 status_final = ""
                 erro_msg = ""
                 tentativas_item = 0
@@ -3114,6 +3654,7 @@ Checkout - Foco Aluguel de Carros"""
                         contrato,
                         valor_cobrar,
                         nome_cliente=nome,
+                        telefone_cliente=telefone,
                     )
                     tentativas_item = resultado.get("tentativas", 1)
 
@@ -3121,37 +3662,56 @@ Checkout - Foco Aluguel de Carros"""
                         tipo = "Cartão"
                         status_cobranca = "Sucesso"
                         status_final = "Cobrado com Cartão"
+                        self.total_cartao_sucesso += 1
+                        self.atualizar_resumo_execucao()
                         self.adicionar_log(f"Contrato {contrato} cobrado com sucesso no cartão.")
                     else:
                         tipo = "Link"
                         status_cobranca = "Sucesso (Link gerado)"
                         email_cliente = resultado.get("email", "").strip()
                         link = resultado.get("link", "").strip()
+                        status_whatsapp = resultado.get("status_whatsapp", "Resultado Indeterminado")
+                        erro_whatsapp = resultado.get("erro_whatsapp", "").strip()
+                        if erro_whatsapp:
+                            erro_msg = f"Erro WhatsApp Coral: {erro_whatsapp}"
 
                         self.adicionar_log(
                             f"Contrato {contrato} gerou link de pagamento. "
                             f"E-mail capturado: {email_cliente} | "
-                            f"Link: {link}"
+                            f"WhatsApp Coral: {status_whatsapp}."
                         )
 
                         try:
-                            resultado_envio = self.enviar_email_link_pagamento(
+                            self.enviar_email_link_pagamento(
                                 email_cliente=email_cliente,
                                 nome_cliente=nome,
                                 valor_pagamento=valor_cobrar,
                                 link_pagamento=link
                             )
                             status_email = "Enviado com Sucesso"
-                            status_final = "Link Gerado e Enviado"
                             self.adicionar_log(f"Link enviado por e-mail com sucesso para o contrato {contrato}.")
-                            self.cobrancas_concluidas += 1
                             self.total_email_sucesso += 1
-                            self.atualizar_resumo_execucao()
                         except Exception as erro_email:
                             status_email = "Erro no Envio"
-                            status_final = "Link Gerado (E-mail falhou)"
-                            erro_msg = f"Erro email: {str(erro_email)}"
+                            erro_email_texto = f"Erro email: {str(erro_email)}"
+                            erro_msg = f"{erro_msg} | {erro_email_texto}" if erro_msg else erro_email_texto
                             self.adicionar_log(f"Falha ao enviar e-mail do contrato {contrato}: {str(erro_email)}")
+
+                        whatsapp_enviado = status_whatsapp == "Enviado com Sucesso"
+                        email_enviado = status_email == "Enviado com Sucesso"
+                        if whatsapp_enviado:
+                            self.total_whatsapp_sucesso += 1
+                        if whatsapp_enviado and email_enviado:
+                            status_final = "Link Enviado por E-mail e WhatsApp"
+                        elif whatsapp_enviado:
+                            status_final = "Link Enviado por WhatsApp (E-mail falhou)"
+                        elif email_enviado:
+                            status_final = "Link Enviado por E-mail (WhatsApp falhou)"
+                        else:
+                            status_final = "Link Gerado (Envios não confirmados)"
+                        if whatsapp_enviado or email_enviado:
+                            self.cobrancas_concluidas += 1
+                        self.atualizar_resumo_execucao()
 
                 except RevisaoManualObrigatoria as e:
                     tentativas_item = max(tentativas_item, 1)
@@ -3181,7 +3741,6 @@ Checkout - Foco Aluguel de Carros"""
                     self.adicionar_log(f"ERRO definitivo no contrato {contrato}: {str(e)}")
 
                 finally:
-                    telefone = "" if self.valor_vazio(linha.get("Telefone")) else str(linha.get("Telefone")).strip()
                     descricao_cobranca = self.obter_descricao_modalidade_cobranca()
                     dados_relatorio = {
                         "Contrato": contrato,
@@ -3195,6 +3754,7 @@ Checkout - Foco Aluguel de Carros"""
                         "Link": link,
                         "Email Cliente": email_cliente,
                         "Status Email": status_email,
+                        "Status WhatsApp": status_whatsapp,
                         "Status Final": status_final,
                         "Data/Hora": time.strftime("%d/%m/%Y %H:%M:%S"),
                         "Erro": erro_msg
