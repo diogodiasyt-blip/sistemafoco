@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import quote
 try:
     import keyring
 except Exception:
@@ -32,6 +33,8 @@ URL_CORAL_LOGIN = "https://coral.aluguefoco.com.br/login"
 URL_CORAL_CONTRATOS = "https://coral.aluguefoco.com.br/contratos"
 XPATH_ABA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/ul/li[3]/a"
 XPATH_CAMPO_BUSCA_CONTRATOS = "/html/body/foco-app/div[1]/foco-rent-agreement-home/div/div/div[2]/input"
+XPATH_ABA_PAGAMENTOS = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[1]/div/div/div[2]/div[11]/button"
+XPATH_EFETUAR_PAGAMENTO = "/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[16]/button"
 APP_CREDENTIAL_SERVICE = "SistemaFOCO"
 CREDENTIAL_MODULE_KEY = "repasse_coral"
 
@@ -59,6 +62,10 @@ SUCCESS_TEXT = "#187a2f"
 SOFT_RED = "#fff1ef"
 
 
+class ParadaSolicitada(Exception):
+    """Interrompe a fila apenas nos pontos seguros do processamento."""
+
+
 def obter_current_url_segura(driver):
     if driver is None:
         return ""
@@ -66,6 +73,13 @@ def obter_current_url_segura(driver):
         return driver.current_url or ""
     except WebDriverException:
         return ""
+
+
+def montar_url_edicao_contrato(contrato):
+    contrato_limpo = str(contrato or "").strip()
+    if not contrato_limpo:
+        raise ValueError("Contrato vazio para montar URL de edicao do Coral.")
+    return f"{URL_CORAL_CONTRATOS}/editar/{quote(contrato_limpo, safe='')}"
 
 
 def sessao_driver_ativa(driver):
@@ -101,6 +115,9 @@ class AppRepasse:
         self.wait = None
         self.campo_busca = None
         self.processando = False
+        self.pausa_ativa = False
+        self.evento_pausa = threading.Event()
+        self.evento_parada = threading.Event()
 
         self.caminho_planilha = tk.StringVar()
         self.usuario = tk.StringVar()
@@ -375,6 +392,35 @@ class AppRepasse:
             font=("Segoe UI", 16, "bold"),
         )
         self.btn_iniciar.pack(side="left", padx=(0, 10))
+        self.btn_pausar = ctk.CTkButton(
+            acoes,
+            text="Pausar",
+            command=self.pausar_ou_continuar,
+            state="disabled",
+            height=48,
+            width=130,
+            corner_radius=14,
+            fg_color="#ffffff",
+            text_color=PRIMARY_TEXT,
+            hover_color=SOFT_RED,
+            border_width=1,
+            border_color="#efb7b1",
+            font=("Segoe UI", 15, "bold"),
+        )
+        self.btn_pausar.pack(side="left", padx=(0, 10))
+        self.btn_parar = ctk.CTkButton(
+            acoes,
+            text="Parar",
+            command=self.solicitar_parada,
+            state="disabled",
+            height=48,
+            width=130,
+            corner_radius=14,
+            fg_color="#a91515",
+            hover_color="#861010",
+            font=("Segoe UI", 15, "bold"),
+        )
+        self.btn_parar.pack(side="left", padx=(0, 10))
         self.btn_limpar = ctk.CTkButton(
             acoes,
             text="Limpar Log",
@@ -442,12 +488,55 @@ class AppRepasse:
             return
 
         self.processando = True
+        self.pausa_ativa = False
+        self.evento_pausa.clear()
+        self.evento_parada.clear()
         self.btn_iniciar.configure(state="disabled")
+        self.btn_pausar.configure(state="normal", text="Pausar")
+        self.btn_parar.configure(state="normal")
         thread = threading.Thread(target=self.processamento_com_reset, daemon=True)
         thread.start()
 
+    def pausar_ou_continuar(self):
+        if not self.processando or self.evento_parada.is_set():
+            return
+        if self.pausa_ativa:
+            self.pausa_ativa = False
+            self.evento_pausa.clear()
+            self.btn_pausar.configure(text="Pausar")
+            self.escrever_log("Processamento retomado pelo usuario.")
+            return
+        self.pausa_ativa = True
+        self.evento_pausa.set()
+        self.btn_pausar.configure(text="Continuar")
+        self.escrever_log("Pausa solicitada; sera aplicada no proximo ponto seguro.")
+
+    def solicitar_parada(self):
+        if not self.processando or self.evento_parada.is_set():
+            return
+        self.evento_parada.set()
+        self.pausa_ativa = False
+        self.evento_pausa.clear()
+        self.btn_pausar.configure(state="disabled", text="Pausar")
+        self.btn_parar.configure(state="disabled")
+        self.escrever_log("Parada solicitada; o contrato em etapa financeira sera concluido antes do encerramento.")
+
+    def verificar_controle_execucao(self):
+        if self.evento_parada.is_set():
+            raise ParadaSolicitada()
+        pausa_registrada = False
+        while self.evento_pausa.is_set():
+            if not pausa_registrada:
+                self.escrever_log("Processamento pausado em ponto seguro.")
+                pausa_registrada = True
+            if self.evento_parada.wait(0.2):
+                raise ParadaSolicitada()
+        if pausa_registrada:
+            self.escrever_log("Processamento continuando.")
+
     # ====================== LÓGICA DE RESET PRINCIPAL ======================
     def processamento_com_reset(self):
+        processamento_concluido = False
         try:
             if self.df is None:
                 self.escrever_log("Carregando planilha e filtrando contratos aptos...")
@@ -461,12 +550,14 @@ class AppRepasse:
                 self.caminho_relatorio_parcial = self.criar_arquivo_relatorio_parcial()
 
             while self.indice_inicio < len(self.df):
+                self.verificar_controle_execucao()
                 self.tentativas_do_contrato_atual = 0
                 contrato_atual = None
                 deve_avancar_indice = True
 
                 while self.tentativas_do_contrato_atual <= MAX_TENTATIVAS_POR_CONTRATO:
                     try:
+                        self.verificar_controle_execucao()
                         row = self.df.iloc[self.indice_inicio]
                         contrato_atual = str(row.iloc[COLUNAS["contrato"]]).strip()
                         valor_raw = str(row.iloc[COLUNAS["valor_repasse"]]).strip()
@@ -514,6 +605,7 @@ class AppRepasse:
                             self.salvar_relatorio_parcial()
                             break
 
+                        self.verificar_controle_execucao()
                         sucesso = self.lancar_repasse(contrato_atual, valor_str)
                         if sucesso:
                             self.lancados += 1
@@ -525,6 +617,8 @@ class AppRepasse:
                         else:
                             raise Exception(f"Falha no lançamento do contrato {contrato_atual}.")
 
+                    except ParadaSolicitada:
+                        raise
                     except Exception as e:
                         self.tentativas_do_contrato_atual += 1
                         self.escrever_log(f"❌ Erro na tentativa {self.tentativas_do_contrato_atual} para o contrato {contrato_atual}: {e}")
@@ -542,8 +636,11 @@ class AppRepasse:
                 if deve_avancar_indice:
                     self.indice_inicio += 1
 
+            processamento_concluido = True
             self.escrever_log("\n🎉 Processamento finalizado com sucesso para todos os contratos aptos!")
 
+        except ParadaSolicitada:
+            self.escrever_log("Processamento interrompido com seguranca por solicitacao do usuario.")
         finally:
             self.escrever_log("\nExecutando ações finais...")
             try:
@@ -563,27 +660,22 @@ class AppRepasse:
                 pass
 
             self.processando = False
-            self.root.after(0, lambda: self.btn_iniciar.configure(state="normal"))
+            self.pausa_ativa = False
+            self.evento_pausa.clear()
+            self.root.after(0, self.restaurar_botoes_apos_processamento)
+            if not processamento_concluido and self.evento_parada.is_set():
+                self.escrever_log("Fila encerrada. O relatorio contem apenas os itens processados ate a parada.")
             self.mostrar_resumo_final()
+
+    def restaurar_botoes_apos_processamento(self):
+        self.btn_iniciar.configure(state="normal")
+        self.btn_pausar.configure(state="disabled", text="Pausar")
+        self.btn_parar.configure(state="disabled")
 
     # ====================== LANÇAMENTO CORRIGIDO ======================
     def lancar_repasse(self, contrato, valor_str):
         try:
-            # Menu Ações
-            self.clicar_seguro(
-                By.XPATH,
-                '/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/div/div/div/div/foco-rent-agreement-list/div/div/div[3]/table/tbody/tr/td[8]/div/div/button',
-                "Menu Ações"
-            )
-            time.sleep(PAUSA_CURTA)
-
-            # Editar
-            self.clicar_seguro(
-                By.XPATH,
-                '/html/body/foco-app/div[1]/foco-rent-agreement-home/div/ngb-tabset/div/div/div/div/foco-rent-agreement-list/div/div/div[3]/table/tbody/tr/td[8]/div/div/div/button[1]',
-                "Editar contrato"
-            )
-            time.sleep(PAUSA_MEDIA)
+            self.abrir_edicao_contrato_direta(contrato)
 
             # Verificação de pop-up de CPF
             xpath_popup_cadastro = '/html/body/ngb-modal-window/div/div/foco-confirm-modal'
@@ -614,7 +706,7 @@ class AppRepasse:
                 self.escrever_log(f"⏳ Aguardando a aba Pagamentos ficar realmente clicável (até {TIMEOUT_PAGAMENTOS}s)...")
                 self.clicar_seguro(
                     By.XPATH,
-                    '/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[1]/div/div/div[2]/div[11]/button',
+                    XPATH_ABA_PAGAMENTOS,
                     "Aba Pagamentos",
                     timeout=TIMEOUT_PAGAMENTOS
                 )
@@ -647,7 +739,7 @@ class AppRepasse:
             # CONCLUSÃO
             self.clicar_seguro(
                 By.XPATH,
-                '/html/body/foco-app/div[1]/foco-rent-agreement-edit/div/div[2]/div[6]/foco-rent-agreement-payment/div/div[2]/div/div[2]/div[15]/button',
+                XPATH_EFETUAR_PAGAMENTO,
                 "Efetuar pagamento"
             )
             time.sleep(PAUSA_MEDIA)
@@ -685,6 +777,16 @@ class AppRepasse:
         except Exception as e:
             self.escrever_log(f"❌ Falha crítica no lançamento de {contrato}: {e}")
             return False
+
+    def abrir_edicao_contrato_direta(self, contrato):
+        url_edicao = montar_url_edicao_contrato(contrato)
+        self.escrever_log(f"Abrindo edicao direta do contrato {contrato}: {url_edicao}")
+        self.driver.get(url_edicao)
+        WebDriverWait(self.driver, TIMEOUT_PADRAO).until(
+            EC.presence_of_element_located((By.XPATH, XPATH_ABA_PAGAMENTOS))
+        )
+        self.escrever_log(f"Tela de edicao aberta diretamente para o contrato {contrato}.")
+        return True
 
     # ====================== PREPARAÇÃO DA TELA (CORRIGIDO) ======================
     def preparar_tela_contratos_para_proximo_loop(self):
