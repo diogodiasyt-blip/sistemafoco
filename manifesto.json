@@ -3,17 +3,17 @@
   "cobranca": {
     "arquivo": "bot_cobranca_mensal_v1.py",
     "classe": "RoboCobrancaMensalApp",
-    "versao": "1.1.17"
+    "versao": "1.1.23"
   },
   "repasse": {
     "arquivo": "robo_repasse_v6.py",
     "classe": "AppRepasse",
-    "versao": "1.1.4"
+    "versao": "1.2.3"
   },
   "contratos": {
     "arquivo": "bot_contratos.py",
     "classe": "RoboContratosApp",
-    "versao": "1.1.6"
+    "versao": "1.1.2"
   },
   "faturamento": {
     "arquivo": "robo_faturamento_v1.py",
@@ -69,7 +69,7 @@
   "cobranca_pedagios": {
     "arquivo": "robo_cobranca_pedagios_v1.py",
     "classe": "RoboCobrancaPedagiosApp",
-    "versao": "1.0.28",
+    "versao": "1.0.24",
     "constructor_mode": "external_process",
     "title": "Robo de Cobranca de Pedagios",
     "geometry": "1180x780",
@@ -118,6 +118,21 @@
     "tutorial_file": "tutorial_cash_coral_portal.txt",
     "show_support_buttons": true,
     "show_model_button": false
+  },
+  "gerador_faturas": {
+    "arquivo": "robo_gerador_faturas_v1.py",
+    "classe": "RoboGeradorFaturasApp",
+    "versao": "1.4.1",
+    "constructor_mode": "external_process",
+    "title": "Gerador de Faturas FOCO",
+    "geometry": "900x720",
+    "resizable": true,
+    "card_title": "Gerador de Faturas",
+    "description": "Gera uma fatura em PDF por contrato usando o modelo oficial do Excel.",
+    "tutorial_file": "tutorial_gerador_faturas.txt",
+    "model_file": "modelo_fatura_contrato.xlsx",
+    "show_support_buttons": true,
+    "show_model_button": true
   }
 }
 
