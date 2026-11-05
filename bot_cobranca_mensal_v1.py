@@ -122,6 +122,9 @@ class BarraProgressoAdapter:
     def pack(self, *args, **kwargs):
         return self.widget.pack(*args, **kwargs)
 
+    def grid(self, *args, **kwargs):
+        return self.widget.grid(*args, **kwargs)
+
     def configure(self, *args, **kwargs):
         return self.widget.configure(*args, **kwargs)
 
@@ -1005,51 +1008,73 @@ class RoboCobrancaMensalApp:
         shell = ctk.CTkFrame(self.root, fg_color=self.MAIN_BG, corner_radius=0)
         shell.pack(fill="both", expand=True)
 
-        header = ctk.CTkFrame(shell, fg_color="#ffffff", corner_radius=0, height=68)
+        header = ctk.CTkFrame(shell, fg_color="#ffffff", corner_radius=0, height=60)
         header.pack(fill="x")
         header.pack_propagate(False)
         logo = self.carregar_logo(reducao=2)
         if logo:
-            ctk.CTkLabel(header, text="", image=logo).pack(side="left", padx=(24, 18))
+            ctk.CTkLabel(header, text="", image=logo).pack(side="left", padx=(20, 14))
         titulo_box = ctk.CTkFrame(header, fg_color="transparent")
-        titulo_box.pack(side="left", fill="y", pady=10)
+        titulo_box.pack(side="left", fill="y", pady=8)
         ctk.CTkLabel(
             titulo_box,
             text="Cobrança",
             text_color=self.PRIMARY_TEXT,
-            font=("Segoe UI", 23, "bold"),
+            font=("Segoe UI", 20, "bold"),
         ).pack(anchor="w")
         ctk.CTkLabel(
             titulo_box,
             text="Mensal e Quinzenal",
             text_color=self.MUTED_TEXT,
             font=("Segoe UI", 11),
-        ).pack(anchor="w", pady=(1, 0))
+        ).pack(anchor="w")
         ctk.CTkLabel(
             header,
-            text="API + WHATSAPP PESSOAL",
-            fg_color=self.SOFT_RED,
-            text_color=self.BUTTON_BG,
-            corner_radius=10,
+            text="v1.1.25",
+            fg_color="#f1f5f9",
+            text_color=self.MUTED_TEXT,
+            corner_radius=8,
             font=("Segoe UI", 10, "bold"),
-        ).pack(side="right", padx=24, ipadx=12, ipady=7)
-        ctk.CTkFrame(shell, height=3, fg_color=self.BUTTON_BG, corner_radius=0).pack(fill="x")
+        ).pack(side="right", padx=20, ipadx=10, ipady=4)
+        ctk.CTkFrame(shell, height=2, fg_color=self.BUTTON_BG, corner_radius=0).pack(fill="x")
 
-        main = ctk.CTkScrollableFrame(
+        # Tabview principal: Cobrança e WhatsApp separados
+        self.tabview = ctk.CTkTabview(
             shell,
+            fg_color=self.MAIN_BG,
+            segmented_button_selected_color=self.BUTTON_BG,
+            segmented_button_selected_hover_color=self.BUTTON_ACTIVE_BG,
+            segmented_button_unselected_color="#e2e8f0",
+            segmented_button_unselected_hover_color="#cbd5e1",
+            text_color="#18212f",
+            corner_radius=10,
+        )
+        self.tabview.pack(fill="both", expand=True, padx=14, pady=(8, 12))
+
+        tab_cobranca = self.tabview.add("Cobrança")
+        tab_whatsapp = self.tabview.add("WhatsApp")
+        tab_cobranca.configure(fg_color=self.MAIN_BG)
+        tab_whatsapp.configure(fg_color=self.MAIN_BG)
+
+        # ==========================================
+        # ABA 1: COBRANÇA
+        # ==========================================
+        scroll_cobranca = ctk.CTkScrollableFrame(
+            tab_cobranca,
             fg_color=self.MAIN_BG,
             corner_radius=0,
             scrollbar_button_color="#d7d7d7",
             scrollbar_button_hover_color="#bdbdbd",
         )
-        main.pack(fill="both", expand=True)
-        conteudo = ctk.CTkFrame(main, fg_color="transparent")
-        conteudo.pack(fill="both", expand=True, padx=18, pady=12)
+        scroll_cobranca.pack(fill="both", expand=True)
+        conteudo_cobranca = ctk.CTkFrame(scroll_cobranca, fg_color="transparent")
+        conteudo_cobranca.pack(fill="both", expand=True, padx=6, pady=4)
 
-        frame_config = self.criar_secao_card(conteudo, "Configuração")
+        # Configuração de Acesso e Modalidade
+        frame_config = self.criar_secao_card(conteudo_cobranca, "Configuração")
         frame_config.pack(fill="x", pady=(0, 8))
         config = ctk.CTkFrame(frame_config, fg_color="transparent")
-        config.pack(fill="x", padx=18, pady=(0, 17))
+        config.pack(fill="x", padx=18, pady=(0, 14))
         config.grid_columnconfigure((0, 1, 2, 3), weight=1, uniform="config")
 
         for coluna, texto in enumerate(("Usuário", "Senha", "Modalidade", "E-mail em cópia")):
@@ -1058,12 +1083,12 @@ class RoboCobrancaMensalApp:
                 text=texto,
                 text_color=self.PRIMARY_TEXT,
                 font=("Segoe UI", 11, "bold"),
-            ).grid(row=0, column=coluna, sticky="w", padx=(0 if coluna == 0 else 5, 5), pady=(0, 5))
+            ).grid(row=0, column=coluna, sticky="w", padx=(0 if coluna == 0 else 5, 5), pady=(0, 4))
 
         self.entry_usuario = ctk.CTkEntry(
             config,
-            height=40,
-            corner_radius=9,
+            height=38,
+            corner_radius=8,
             fg_color=self.INPUT_BG,
             border_color=self.CARD_BORDER,
             placeholder_text="Usuário Coral",
@@ -1071,8 +1096,8 @@ class RoboCobrancaMensalApp:
         self.entry_usuario.grid(row=1, column=0, sticky="ew", padx=(0, 5))
         self.entry_senha = ctk.CTkEntry(
             config,
-            height=40,
-            corner_radius=9,
+            height=38,
+            corner_radius=8,
             fg_color=self.INPUT_BG,
             border_color=self.CARD_BORDER,
             placeholder_text="Senha",
@@ -1085,8 +1110,8 @@ class RoboCobrancaMensalApp:
             variable=self.var_modalidade,
             values=[self.MODALIDADE_MENSAL, self.MODALIDADE_QUINZENAL],
             state="readonly",
-            height=40,
-            corner_radius=9,
+            height=38,
+            corner_radius=8,
             fg_color=self.INPUT_BG,
             border_color=self.CARD_BORDER,
             button_color=self.BUTTON_BG,
@@ -1096,8 +1121,8 @@ class RoboCobrancaMensalApp:
         self.combo_modalidade.grid(row=1, column=2, sticky="ew", padx=5)
         self.entry_email_copia = ctk.CTkEntry(
             config,
-            height=40,
-            corner_radius=9,
+            height=38,
+            corner_radius=8,
             fg_color=self.INPUT_BG,
             border_color=self.CARD_BORDER,
             placeholder_text="Opcional",
@@ -1105,25 +1130,25 @@ class RoboCobrancaMensalApp:
         self.entry_email_copia.grid(row=1, column=3, sticky="ew", padx=(5, 0))
 
         acesso = ctk.CTkFrame(config, fg_color="transparent")
-        acesso.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        acesso.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
         ctk.CTkButton(
             acesso,
             text="Salvar acesso",
             command=self.salvar_credenciais,
-            height=32,
-            width=112,
-            corner_radius=8,
+            height=30,
+            width=100,
+            corner_radius=7,
             fg_color=self.BUTTON_BG,
             hover_color=self.BUTTON_ACTIVE_BG,
             font=("Segoe UI", 11, "bold"),
-        ).pack(side="left", padx=(0, 7))
+        ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
             acesso,
             text="Limpar",
             command=self.limpar_credenciais,
-            height=32,
-            width=76,
-            corner_radius=8,
+            height=30,
+            width=70,
+            corner_radius=7,
             fg_color="#ffffff",
             text_color=self.MUTED_TEXT,
             hover_color="#f1f1f1",
@@ -1133,17 +1158,18 @@ class RoboCobrancaMensalApp:
         ).pack(side="left")
         self.carregar_credenciais_salvas()
 
-        frame_planilha = self.criar_secao_card(conteudo, "Planilha")
+        # Planilha
+        frame_planilha = self.criar_secao_card(conteudo_cobranca, "Planilha da Campanha")
         frame_planilha.pack(fill="x", pady=(0, 8))
         planilha = ctk.CTkFrame(frame_planilha, fg_color="transparent")
-        planilha.pack(fill="x", padx=18, pady=(0, 17))
+        planilha.pack(fill="x", padx=18, pady=(0, 14))
         self.btn_planilha = ctk.CTkButton(
             planilha,
             text="Selecionar arquivo",
             command=self.selecionar_planilha,
-            height=38,
-            width=142,
-            corner_radius=9,
+            height=36,
+            width=140,
+            corner_radius=8,
             fg_color=self.BUTTON_BG,
             hover_color=self.BUTTON_ACTIVE_BG,
             font=("Segoe UI", 11, "bold"),
@@ -1168,153 +1194,29 @@ class RoboCobrancaMensalApp:
         )
         self.label_aptos.pack(fill="x", pady=(2, 0))
 
-        frame_whatsapp = self.criar_secao_card(
-            conteudo,
-            "WhatsApp pessoal do cobrador",
-            "Os links gerados pela API ficam disponíveis para envio pelo seu WhatsApp Web pessoal.",
-        )
-        frame_whatsapp.pack(fill="x", pady=(0, 8))
-        whatsapp_box = ctk.CTkFrame(frame_whatsapp, fg_color="transparent")
-        whatsapp_box.pack(fill="x", padx=18, pady=(0, 14))
-        whatsapp_box.grid_columnconfigure(1, weight=1)
-        self.btn_selecionar_relatorio_whatsapp = ctk.CTkButton(
-            whatsapp_box,
-            text="Selecionar Relatório da Cobrança",
-            command=self.selecionar_relatorio_whatsapp,
-            height=36,
-            width=210,
-            corner_radius=9,
-            fg_color="#ffffff",
-            text_color=self.PRIMARY_TEXT,
-            hover_color="#f1f1f1",
-            border_width=1,
-            border_color=self.CARD_BORDER,
-            font=("Segoe UI", 11, "bold"),
-        )
-        self.btn_selecionar_relatorio_whatsapp.grid(row=0, column=0, sticky="w", padx=(0, 12))
-        info_whatsapp = ctk.CTkFrame(whatsapp_box, fg_color="transparent")
-        info_whatsapp.grid(row=0, column=1, sticky="ew")
-        self.label_relatorio_whatsapp = ctk.CTkLabel(
-            info_whatsapp,
-            text="Selecione o relatório gerado na cobrança para enviar os links no WhatsApp.",
-            text_color=self.MUTED_TEXT,
-            font=("Segoe UI", 10),
-            anchor="w",
-        )
-        self.label_relatorio_whatsapp.pack(fill="x")
-        self.label_whatsapp_aptos = ctk.CTkLabel(
-            info_whatsapp,
-            text="Contratos aptos para envio no WhatsApp: 0",
-            text_color=self.PRIMARY_TEXT,
-            font=("Segoe UI", 11, "bold"),
-            anchor="w",
-        )
-        self.label_whatsapp_aptos.pack(fill="x", pady=(2, 0))
-
-        whatsapp_controls = ctk.CTkFrame(whatsapp_box, fg_color="transparent")
-        whatsapp_controls.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        whatsapp_controls.grid_columnconfigure(3, weight=1)
-        self.btn_iniciar_whatsapp = ctk.CTkButton(
-            whatsapp_controls,
-            text="Iniciar WhatsApp",
-            command=self.iniciar_robo_whatsapp,
-            height=34,
-            width=150,
-            corner_radius=8,
-            fg_color=self.BUTTON_BG,
-            hover_color=self.BUTTON_ACTIVE_BG,
-            font=("Segoe UI", 11, "bold"),
-        )
-        self.btn_iniciar_whatsapp.grid(row=0, column=0, sticky="w", padx=(0, 6))
-        self.btn_pausar_whatsapp = ctk.CTkButton(
-            whatsapp_controls,
-            text="Pausar",
-            command=self.alternar_pausa_whatsapp,
-            state="disabled",
-            height=34,
-            width=90,
-            corner_radius=8,
-            fg_color="#ffffff",
-            text_color=self.PRIMARY_TEXT,
-            hover_color="#f1f1f1",
-            border_width=1,
-            border_color=self.CARD_BORDER,
-            font=("Segoe UI", 10, "bold"),
-        )
-        self.btn_pausar_whatsapp.grid(row=0, column=1, sticky="w", padx=6)
-        self.btn_parar_whatsapp = ctk.CTkButton(
-            whatsapp_controls,
-            text="Parar",
-            command=self.solicitar_parada_whatsapp,
-            state="disabled",
-            height=34,
-            width=90,
-            corner_radius=8,
-            fg_color="#ffffff",
-            text_color=self.BUTTON_BG,
-            hover_color=self.SOFT_RED,
-            border_width=1,
-            border_color="#efc8cb",
-            font=("Segoe UI", 10, "bold"),
-        )
-        self.btn_parar_whatsapp.grid(row=0, column=2, sticky="w", padx=6)
-        self.label_progresso_whatsapp = ctk.CTkLabel(
-            whatsapp_controls,
-            text="0/0  •  Aguardando",
-            text_color=self.MUTED_TEXT,
-            font=("Segoe UI", 10),
-            anchor="e",
-        )
-        self.label_progresso_whatsapp.grid(row=0, column=3, sticky="e", padx=(12, 0))
-        self.progress_whatsapp = BarraProgressoAdapter(
-            ctk.CTkProgressBar(
-                whatsapp_box,
-                height=7,
-                corner_radius=999,
-                progress_color="#25D366",
-                fg_color="#e7eaee",
-            )
-        )
-        self.progress_whatsapp.widget.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        self.progress_whatsapp.widget.set(0)
-        self.txt_logs_whatsapp = ctk.CTkTextbox(
-            whatsapp_box,
-            height=70,
-            corner_radius=8,
-            fg_color="#fafafa",
-            border_width=1,
-            border_color=self.CARD_BORDER,
-            text_color="#353535",
-            font=("Consolas", 9),
-        )
-        self.txt_logs_whatsapp.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        self.txt_logs_whatsapp.configure(state="disabled")
-
-        resumo = ctk.CTkFrame(conteudo, fg_color="transparent")
+        # Resumo KPIs Cobrança
+        resumo = ctk.CTkFrame(conteudo_cobranca, fg_color="transparent")
         resumo.pack(fill="x", pady=(0, 8))
-        resumo.grid_columnconfigure((0, 1, 2), weight=1, uniform="kpi")
+        resumo.grid_columnconfigure((0, 1), weight=1, uniform="kpi")
         card_cartao, self.label_total_cartao = self.criar_kpi_card(
             resumo, "Cartão", "0 aprovadas", self.BUTTON_BG
         )
-        card_cartao.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-        card_comunicacao, self.label_total_email = self.criar_kpi_card(
-            resumo, "Comunicações", "E-mail 0\nWhatsApp 0", self.BUTTON_BG
-        )
-        card_comunicacao.grid(row=0, column=1, sticky="nsew", padx=5)
+        card_cartao.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         card_erros, self.label_total_erros = self.criar_kpi_card(
             resumo, "Erros", "0 com erro", self.BUTTON_BG
         )
-        card_erros.grid(row=0, column=2, sticky="nsew", padx=(5, 0))
+        card_erros.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
 
-        operacao = ctk.CTkFrame(conteudo, fg_color="transparent")
+        # Execução & Logs da Cobrança
+        operacao = ctk.CTkFrame(conteudo_cobranca, fg_color="transparent")
         operacao.pack(fill="both", expand=True)
         operacao.grid_columnconfigure(0, weight=1)
         operacao.grid_columnconfigure(1, weight=2)
 
         frame_execucao = self.criar_secao_card(operacao, "Execução")
-        frame_execucao.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        frame_execucao.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
         exec_box = ctk.CTkFrame(frame_execucao, fg_color="transparent")
-        exec_box.pack(fill="both", expand=True, padx=18, pady=(0, 17))
+        exec_box.pack(fill="both", expand=True, padx=16, pady=(0, 14))
         self.label_progresso = ctk.CTkLabel(
             exec_box,
             text="0/0  •  Aguardando",
@@ -1322,7 +1224,7 @@ class RoboCobrancaMensalApp:
             font=("Segoe UI", 11, "bold"),
             anchor="w",
         )
-        self.label_progresso.pack(fill="x", pady=(0, 8))
+        self.label_progresso.pack(fill="x", pady=(0, 6))
         self.progress = BarraProgressoAdapter(
             ctk.CTkProgressBar(
                 exec_box,
@@ -1332,19 +1234,19 @@ class RoboCobrancaMensalApp:
                 fg_color="#ededed",
             )
         )
-        self.progress.pack(fill="x", pady=(0, 14))
+        self.progress.pack(fill="x", pady=(0, 12))
         self.progress.widget.set(0)
         self.btn_iniciar = ctk.CTkButton(
             exec_box,
-            text="Iniciar",
+            text="Iniciar Cobrança",
             command=self.iniciar_robo,
-            height=42,
-            corner_radius=9,
+            height=40,
+            corner_radius=8,
             fg_color=self.BUTTON_BG,
             hover_color=self.BUTTON_ACTIVE_BG,
             font=("Segoe UI", 12, "bold"),
         )
-        self.btn_iniciar.pack(fill="x", pady=(0, 7))
+        self.btn_iniciar.pack(fill="x", pady=(0, 6))
         controles = ctk.CTkFrame(exec_box, fg_color="transparent")
         controles.pack(fill="x")
         controles.grid_columnconfigure((0, 1), weight=1, uniform="controle")
@@ -1353,8 +1255,8 @@ class RoboCobrancaMensalApp:
             text="Pausar",
             command=self.alternar_pausa,
             state="disabled",
-            height=36,
-            corner_radius=8,
+            height=34,
+            corner_radius=7,
             fg_color="#ffffff",
             text_color=self.PRIMARY_TEXT,
             hover_color="#f1f1f1",
@@ -1362,14 +1264,14 @@ class RoboCobrancaMensalApp:
             border_color=self.CARD_BORDER,
             font=("Segoe UI", 10, "bold"),
         )
-        self.btn_pausar.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        self.btn_pausar.grid(row=0, column=0, sticky="ew", padx=(0, 3))
         self.btn_parar = ctk.CTkButton(
             controles,
             text="Parar",
             command=self.solicitar_parada,
             state="disabled",
-            height=36,
-            corner_radius=8,
+            height=34,
+            corner_radius=7,
             fg_color="#ffffff",
             text_color=self.BUTTON_BG,
             hover_color=self.SOFT_RED,
@@ -1377,16 +1279,16 @@ class RoboCobrancaMensalApp:
             border_color="#efc8cb",
             font=("Segoe UI", 10, "bold"),
         )
-        self.btn_parar.grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        self.btn_parar.grid(row=0, column=1, sticky="ew", padx=(3, 0))
 
-        frame_logs = self.criar_secao_card(operacao, "Log")
-        frame_logs.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        frame_logs = self.criar_secao_card(operacao, "Auditoria e Logs")
+        frame_logs.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
         logs_box = ctk.CTkFrame(frame_logs, fg_color="transparent")
-        logs_box.pack(fill="both", expand=True, padx=18, pady=(0, 17))
+        logs_box.pack(fill="both", expand=True, padx=16, pady=(0, 14))
         self.txt_logs = ctk.CTkTextbox(
             logs_box,
-            height=130,
-            corner_radius=9,
+            height=140,
+            corner_radius=8,
             fg_color="#fafafa",
             border_width=1,
             border_color=self.CARD_BORDER,
@@ -1397,6 +1299,164 @@ class RoboCobrancaMensalApp:
         )
         self.txt_logs.pack(fill="both", expand=True)
         self.txt_logs.configure(state="disabled")
+
+        # ==========================================
+        # ABA 2: WHATSAPP
+        # ==========================================
+        scroll_whatsapp = ctk.CTkScrollableFrame(
+            tab_whatsapp,
+            fg_color=self.MAIN_BG,
+            corner_radius=0,
+            scrollbar_button_color="#d7d7d7",
+            scrollbar_button_hover_color="#bdbdbd",
+        )
+        scroll_whatsapp.pack(fill="both", expand=True)
+        conteudo_whatsapp = ctk.CTkFrame(scroll_whatsapp, fg_color="transparent")
+        conteudo_whatsapp.pack(fill="both", expand=True, padx=6, pady=4)
+
+        # Relatório de Cobrança (Origem dos Links)
+        frame_rel_whats = self.criar_secao_card(conteudo_whatsapp, "Relatório da Cobrança")
+        frame_rel_whats.pack(fill="x", pady=(0, 8))
+        rel_box = ctk.CTkFrame(frame_rel_whats, fg_color="transparent")
+        rel_box.pack(fill="x", padx=18, pady=(0, 14))
+        self.btn_selecionar_relatorio_whatsapp = ctk.CTkButton(
+            rel_box,
+            text="Selecionar Relatório",
+            command=self.selecionar_relatorio_whatsapp,
+            height=36,
+            width=160,
+            corner_radius=8,
+            fg_color=self.BUTTON_BG,
+            hover_color=self.BUTTON_ACTIVE_BG,
+            font=("Segoe UI", 11, "bold"),
+        )
+        self.btn_selecionar_relatorio_whatsapp.pack(side="left", padx=(0, 14))
+        rel_info = ctk.CTkFrame(rel_box, fg_color="transparent")
+        rel_info.pack(side="left", fill="x", expand=True)
+        self.label_relatorio_whatsapp = ctk.CTkLabel(
+            rel_info,
+            text="Nenhum relatório selecionado",
+            text_color=self.MUTED_TEXT,
+            font=("Segoe UI", 11),
+            anchor="w",
+        )
+        self.label_relatorio_whatsapp.pack(fill="x")
+        self.label_whatsapp_aptos = ctk.CTkLabel(
+            rel_info,
+            text="Contratos aptos para envio no WhatsApp: 0",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 12, "bold"),
+            anchor="w",
+        )
+        self.label_whatsapp_aptos.pack(fill="x", pady=(2, 0))
+
+        # Resumo KPI Comunicações
+        resumo_whats = ctk.CTkFrame(conteudo_whatsapp, fg_color="transparent")
+        resumo_whats.pack(fill="x", pady=(0, 8))
+        card_comunicacao, self.label_total_email = self.criar_kpi_card(
+            resumo_whats, "Comunicações", "E-mail 0\nWhatsApp 0", "#25D366"
+        )
+        card_comunicacao.pack(fill="x")
+
+        # Execução & Logs do WhatsApp
+        operacao_whats = ctk.CTkFrame(conteudo_whatsapp, fg_color="transparent")
+        operacao_whats.pack(fill="both", expand=True)
+        operacao_whats.grid_columnconfigure(0, weight=1)
+        operacao_whats.grid_columnconfigure(1, weight=2)
+
+        frame_exec_whats = self.criar_secao_card(operacao_whats, "Disparo WhatsApp")
+        frame_exec_whats.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        exec_whats_box = ctk.CTkFrame(frame_exec_whats, fg_color="transparent")
+        exec_whats_box.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+
+        self.label_progresso_whatsapp = ctk.CTkLabel(
+            exec_whats_box,
+            text="0/0  •  Aguardando",
+            text_color=self.PRIMARY_TEXT,
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        )
+        self.label_progresso_whatsapp.pack(fill="x", pady=(0, 6))
+
+        self.progress_whatsapp = BarraProgressoAdapter(
+            ctk.CTkProgressBar(
+                exec_whats_box,
+                height=8,
+                corner_radius=999,
+                progress_color="#25D366",
+                fg_color="#ededed",
+            )
+        )
+        self.progress_whatsapp.pack(fill="x", pady=(0, 12))
+        self.progress_whatsapp.widget.set(0)
+
+        self.btn_iniciar_whatsapp = ctk.CTkButton(
+            exec_whats_box,
+            text="Iniciar WhatsApp",
+            command=self.iniciar_robo_whatsapp,
+            height=40,
+            corner_radius=8,
+            fg_color="#25D366",
+            hover_color="#1ea952",
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.btn_iniciar_whatsapp.pack(fill="x", pady=(0, 6))
+
+        controles_whats = ctk.CTkFrame(exec_whats_box, fg_color="transparent")
+        controles_whats.pack(fill="x")
+        controles_whats.grid_columnconfigure((0, 1), weight=1, uniform="controle_whats")
+
+        self.btn_pausar_whatsapp = ctk.CTkButton(
+            controles_whats,
+            text="Pausar",
+            command=self.alternar_pausa_whatsapp,
+            state="disabled",
+            height=34,
+            corner_radius=7,
+            fg_color="#ffffff",
+            text_color=self.PRIMARY_TEXT,
+            hover_color="#f1f1f1",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.btn_pausar_whatsapp.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+        self.btn_parar_whatsapp = ctk.CTkButton(
+            controles_whats,
+            text="Parar",
+            command=self.solicitar_parada_whatsapp,
+            state="disabled",
+            height=34,
+            corner_radius=7,
+            fg_color="#ffffff",
+            text_color=self.BUTTON_BG,
+            hover_color=self.SOFT_RED,
+            border_width=1,
+            border_color="#efc8cb",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.btn_parar_whatsapp.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
+        frame_logs_whats = self.criar_secao_card(operacao_whats, "Logs WhatsApp")
+        frame_logs_whats.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        logs_whats_box = ctk.CTkFrame(frame_logs_whats, fg_color="transparent")
+        logs_whats_box.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+
+        self.txt_logs_whatsapp = ctk.CTkTextbox(
+            logs_whats_box,
+            height=140,
+            corner_radius=8,
+            fg_color="#fafafa",
+            border_width=1,
+            border_color=self.CARD_BORDER,
+            text_color="#353535",
+            font=("Consolas", 10),
+            scrollbar_button_color="#d8d8d8",
+            scrollbar_button_hover_color="#bdbdbd",
+        )
+        self.txt_logs_whatsapp.pack(fill="both", expand=True)
+        self.txt_logs_whatsapp.configure(state="disabled")
 
     # =========================
     # LOGS / PROGRESSO
