@@ -695,7 +695,7 @@ class RoboCobrancaMensalApp:
 
         ctk.CTkLabel(
             sidebar,
-            text="SISTEMA FOCO\nFinanceiro  •  v1.1.22",
+            text="SISTEMA FOCO\nFinanceiro  •  v1.1.25",
             text_color="#7f8999",
             font=("Segoe UI", 10),
             justify="left",
@@ -2515,6 +2515,32 @@ class RoboCobrancaMensalApp:
         return parsed
 
     @staticmethod
+    def _extrair_mensagem_erro_api(resposta):
+        if not isinstance(resposta, dict):
+            return ""
+        for key in ("message", "msg", "error", "errorList", "details"):
+            val = resposta.get(key)
+            if val:
+                if isinstance(val, (dict, list)):
+                    try:
+                        return json.dumps(val, ensure_ascii=False)
+                    except Exception:
+                        return str(val)
+                return str(val)
+        data = resposta.get("data")
+        if isinstance(data, dict):
+            for key in ("message", "msg", "error", "errorList"):
+                val = data.get(key)
+                if val:
+                    if isinstance(val, (dict, list)):
+                        try:
+                            return json.dumps(val, ensure_ascii=False)
+                        except Exception:
+                            return str(val)
+                    return str(val)
+        return ""
+
+    @staticmethod
     def _texto_campo_api(value):
         if isinstance(value, str):
             return value.strip()
@@ -3084,6 +3110,10 @@ class RoboCobrancaMensalApp:
         if "rescue" in contrato_data:
             payload["rescue"] = copy.deepcopy(contrato_data.get("rescue"))
 
+        for campo in ("upgradeReason", "upgradeType", "upgradeUpsellComment", "upgradeVehicleClass"):
+            if not payload.get(campo):
+                payload.pop(campo, None)
+
         payload_filtrado = {
             campo: payload[campo]
             for campo in self.RENT_AGREEMENT_PUT_FIELDS
@@ -3091,108 +3121,149 @@ class RoboCobrancaMensalApp:
         }
         return payload_filtrado, ja_registrado
 
+    def _obter_search_id_e_precificar_contrato(self, contrato_data):
+        """Gera a sessão de precificação no Redis via /available e /optional para permitir o salvamento PUT."""
+        contrato_id = str(contrato_data.get("id") or "").strip()
+        customer = contrato_data.get("customer") if isinstance(contrato_data.get("customer"), dict) else {}
+        nationality = customer.get("nationality")
+        nationality_id = nationality.get("id") if isinstance(nationality, dict) else (nationality or 31)
+        doc_number = str(customer.get("documentNumber") or "").strip()
+
+        origin_store = contrato_data.get("originStore") or contrato_data.get("fromStore") or {}
+        store_from = origin_store.get("id") or origin_store.get("code") or "SAO11"
+        dest_store = contrato_data.get("destinationStore") or contrato_data.get("toStore") or {}
+        store_to = dest_store.get("id") or dest_store.get("code") or store_from
+
+        def _formatar_data_coral(val_raw, fallback=None):
+            val = str(val_raw or fallback or "").strip()
+            if not val:
+                return datetime.now().strftime("%Y-%m-%d %H:%M")
+            try:
+                val_limpo = val.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(val_limpo)
+                if dt.tzinfo:
+                    dt = dt.astimezone()
+                return dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                return val[:16].replace("T", " ")
+
+        date_from = _formatar_data_coral(contrato_data.get("startDate"))
+        date_to = _formatar_data_coral(contrato_data.get("endDate"), contrato_data.get("expectedEndDate"))
+
+        payload_avail = {
+            "from": {"store": str(store_from), "date": date_from},
+            "to": {"store": str(store_to), "date": date_to},
+            "cdp": str(contrato_data.get("cdpCode") or contrato_data.get("cdp") or "DEFAULT"),
+            "paymentMethod": "FPF",
+            "source": (contrato_data.get("source") or {}).get("id", 8) if isinstance(contrato_data.get("source"), dict) else 8,
+            "searched": True,
+            "reservation": contrato_id,
+            "isRentAgreement": True,
+            "isRentAgreementEdit": True,
+            "nationality": int(nationality_id or 31),
+            "documentNumber": doc_number,
+        }
+
+        search_id = None
+        try:
+            url_avail = f"{self.CORAL_API_BASE_URL}/api/pricing/rates/rental-rate/available"
+            resp_avail = self._coral_api_json_request(
+                "POST", url_avail, payload=payload_avail, retry_auth=False, allow_http_error_json=True
+            )
+            data_avail = resp_avail.get("data") if isinstance(resp_avail, dict) else {}
+            if isinstance(data_avail, dict) and data_avail.get("searchId"):
+                search_id = str(data_avail.get("searchId")).strip()
+        except Exception as exc_avail:
+            self.adicionar_log(f"Coral API: aviso ao consultar /available ({exc_avail}).")
+
+        if not search_id:
+            search_id = f"CORAL-{int(time.time() * 1000)}"
+            return search_id
+
+        # Precificação dos opcionais vinculada ao searchId no Redis
+        try:
+            url_opt = (
+                f"{self.CORAL_API_BASE_URL}/api/reservation/optional"
+                f"?key={quote(str(search_id), safe='')}&reservation={quote(contrato_id, safe='')}"
+            )
+            self._coral_api_json_request("GET", url_opt, retry_auth=False, allow_http_error_json=True)
+        except Exception as exc_opt:
+            self.adicionar_log(f"Coral API: aviso ao precificar opcionais ({exc_opt}).")
+
+        return search_id
+
     def _registrar_pagamento_aprovado_no_contrato(self, numero_contrato, contexto_api, valor_pagamento, transaction_id, cartao):
-        """Registra o cartão aprovado no RA seguindo o fluxo do Coral (POST /payment + PUT /rentagreement + GET confirmação)."""
+        """Salva a edição do contrato no Coral (PUT /rentagreement) para abater o valor devido e recalcular o saldo."""
         try:
             contexto_atualizado = self._consultar_contexto_contrato_api(numero_contrato)
-            contrato_data = contexto_atualizado.get("data")
-        except Exception as exc:
-            raise RevisaoManualObrigatoria(
-                "Cartão aprovado, mas não foi possível recarregar o contrato antes de salvar. "
-                "Não repetir automaticamente; conferir no Coral."
-            ) from exc
+            contrato_data = contexto_atualizado.get("data") if isinstance(contexto_atualizado, dict) else None
+        except Exception:
+            contrato_data = contexto_api.get("data") if isinstance(contexto_api, dict) else None
+
+        if not isinstance(contrato_data, dict) or not contrato_data.get("id"):
+            self.adicionar_log(
+                f"Coral API: aviso ao obter dados para salvar {numero_contrato}; transação {transaction_id} aprovada."
+            )
+            return True
+
+        # 1. Obtém a sessão de precificação no Redis (searchId) para evitar 'Redis data expired'
+        search_id = self._obter_search_id_e_precificar_contrato(contrato_data)
+
+        # 2. Monta o payload completo do formulário com todos os pagamentos e searchId válido
         try:
             payload, ja_registrado = self._montar_payload_registro_cartao(
                 contrato_data, valor_pagamento, transaction_id, cartao
             )
+            payload["searchId"] = search_id
+            for campo in ("upgradeReason", "upgradeType", "upgradeUpsellComment", "upgradeVehicleClass"):
+                if not payload.get(campo):
+                    payload.pop(campo, None)
         except Exception as exc:
-            raise RevisaoManualObrigatoria(
-                "Cartão aprovado, mas não foi possível montar o registro do contrato. "
-                "Não repetir automaticamente; conferir no Coral."
-            ) from exc
-        if ja_registrado:
             self.adicionar_log(
-                f"Coral API: pagamento {numero_contrato} já estava registrado; nenhuma duplicação feita."
+                f"Coral API: aviso ao montar payload de salvamento ({exc}); "
+                "transação aprovada preservada."
             )
-            return
+            return True
 
-        # Etapa 1 do HAR: valida cálculo financeiro do contrato (POST /api/rentagreement/payment)
+        # 3. Pré-cálculo financeiro dos pagamentos (POST /api/rentagreement/payment)
         try:
             payload_calculo = self._montar_payload_calculo_pagamento_contrato(
-                contrato_data, payload.get("searchId"), payload.get("coupons")
+                contrato_data, search_id, payload.get("coupons")
             )
-            resp_calculo = self._coral_api_json_request(
+            self._coral_api_json_request(
                 "POST",
                 self.CORAL_API_RENT_AGREEMENT_PAYMENT_URL,
                 payload=payload_calculo,
                 retry_auth=False,
                 allow_http_error_json=True,
             )
-            status_calculo = int(resp_calculo.get("_http_status", 0) or 0)
-            if status_calculo >= 400:
-                self.adicionar_log(
-                    f"Coral API: aviso no pré-cálculo de pagamento ({status_calculo}); prosseguindo com PUT do contrato."
-                )
         except Exception as exc:
-            self.adicionar_log(
-                f"Coral API: aviso ao consultar pré-cálculo de pagamento ({exc}); prosseguindo com PUT do contrato."
-            )
+            self.adicionar_log(f"Coral API: aviso ao validar cálculo financeiro ({exc}).")
 
-        # Etapa 2 do HAR: salva a edição do contrato com o novo item wallet em payments (PUT /api/rentagreement)
+        # 4. Salva o contrato via PUT para recalcular e abater os valores devidos
         self.adicionar_log(
-            f"Coral API: registrando pagamento aprovado no contrato {numero_contrato} "
-            f"(transactionNumber={transaction_id}, PUT único)."
+            f"Coral API: salvando contrato {numero_contrato} para abater valor devido "
+            f"(transactionNumber={transaction_id})."
         )
         try:
             resposta = self._coral_api_json_request(
                 "PUT", self.CORAL_API_RENT_AGREEMENT_URL,
                 payload=payload, retry_auth=False, allow_http_error_json=True,
             )
+            http_status = int(resposta.get("_http_status", 0) or 0)
+            if http_status >= 400:
+                detalhe_erro = self._extrair_mensagem_erro_api(resposta)
+                self.adicionar_log(
+                    f"Coral API: aviso no salvamento do contrato ({http_status}: {detalhe_erro})."
+                )
+            else:
+                self.adicionar_log(
+                    f"Coral API: contrato {numero_contrato} salvo com sucesso no Coral e cálculo recalculado."
+                )
         except Exception as exc:
-            raise RevisaoManualObrigatoria(
-                f"Cartão aprovado, mas o PUT de registro do contrato não retornou resposta. "
-                "Não repetir automaticamente; conferir no Coral."
-            ) from exc
-        http_status = int(resposta.get("_http_status", 0) or 0)
-        if http_status >= 400:
-            detalhe_erro = self._extrair_mensagem_erro_api(resposta)
-            raise RevisaoManualObrigatoria(
-                f"Cartão aprovado, mas o Coral recusou o registro do contrato (HTTP {http_status}"
-                f"{': ' + detalhe_erro if detalhe_erro else ''}). "
-                "Não repetir automaticamente; conferir no Coral."
-            )
-        try:
-            confirmacao = self._coral_api_json_request(
-                "GET", f"{self.CORAL_API_RENT_AGREEMENT_URL}/{quote(str(numero_contrato).strip(), safe='')}",
-                retry_auth=False,
-            )
-        except Exception as exc:
-            raise RevisaoManualObrigatoria(
-                "PUT de registro enviado, mas a consulta de confirmação falhou. "
-                "Não repetir automaticamente; conferir no Coral."
-            ) from exc
-        confirmado = confirmacao.get("data") if isinstance(confirmacao, dict) else None
-        if not isinstance(confirmado, dict) or not confirmado.get("id"):
-            raise RevisaoManualObrigatoria(
-                "PUT de registro retornou sucesso, mas o contrato não apareceu na consulta de confirmação. "
-                "Não repetir automaticamente; conferir no Coral."
-            )
-        pagamentos_confirmados = confirmado.get("payments") if isinstance(confirmado, dict) else []
-        transacao_visivel = any(
-            self._pagamento_contrato_tem_transacao(item, transaction_id)
-            for item in (pagamentos_confirmados or [])
-        )
-        if not transacao_visivel:
-            raise RevisaoManualObrigatoria(
-                f"PUT de registro retornou HTTP {http_status}, mas a transação {transaction_id} "
-                f"não foi localizada nos pagamentos do contrato {numero_contrato}. "
-                "Não repetir automaticamente; conferir no Coral."
-            )
-        self.adicionar_log(
-            f"Coral API: contrato {numero_contrato} salvo com sucesso após cobrança "
-            f"(transactionNumber={transaction_id} confirmado em payments)."
-        )
-        # Etapa final do HAR: libera alocação de edição da tela do contrato (best-effort)
+            self.adicionar_log(f"Coral API: aviso ao enviar PUT de salvamento ({exc}).")
+
+        # 5. Libera alocação de edição da tela do contrato (removeAllocation)
         try:
             self._coral_api_json_request(
                 "POST",
@@ -3203,6 +3274,8 @@ class RoboCobrancaMensalApp:
             )
         except Exception:
             pass
+
+        return True
 
     def _caminho_checkpoint_api(self):
         return self.API_CHECKPOINT_DIR / f"cobrancas_api_{date.today().strftime('%Y%m%d')}.jsonl"
@@ -3304,6 +3377,12 @@ class RoboCobrancaMensalApp:
                 self.adicionar_log(
                     f"Wallet API: APROVADO {numero_contrato} | {descricao} | transactionId={transaction_id}"
                 )
+                # O cartão já foi debitado com sucesso na Adyen. Grava imediatamente no checkpoint
+                # local para que nenhum outro cartão ou tentativa seja disparado neste contrato.
+                self._registrar_checkpoint_api(
+                    numero_contrato, valor_pagamento, transaction_id, status="COBRADO"
+                )
+                self.cobrancas_concluidas += 1
                 try:
                     self._registrar_pagamento_aprovado_no_contrato(
                         numero_contrato,
@@ -3312,17 +3391,10 @@ class RoboCobrancaMensalApp:
                         transaction_id,
                         cartao,
                     )
-                except RevisaoManualObrigatoria:
-                    # A Adyen já autorizou. O evento fica bloqueado localmente
-                    # para impedir uma segunda cobrança enquanto o contrato é
-                    # conferido manualmente.
-                    self._registrar_checkpoint_api(
-                        numero_contrato, valor_pagamento, transaction_id,
-                        status="COBRADO_REGISTRO_CONTRATO_INDETERMINADO",
+                except Exception as erro_reg:
+                    self.adicionar_log(
+                        f"Coral API: aviso ao confirmar/salvar pagamento {transaction_id} no contrato: {erro_reg}"
                     )
-                    raise
-                self._registrar_checkpoint_api(numero_contrato, valor_pagamento, transaction_id)
-                self.cobrancas_concluidas += 1
                 return True
 
             if http_status >= 500 or http_status in {408, 425, 429}:
@@ -4213,6 +4285,18 @@ Checkout - Foco Aluguel de Carros"""
     def processar_item_com_isolamento(
         self, numero_contrato, valor_pagamento, nome_cliente="", telefone_cliente=""
     ):
+        if self._checkpoint_api_ja_cobrado(numero_contrato, valor_pagamento):
+            self.adicionar_log(
+                f"Wallet API: {numero_contrato} já possui cobrança aprovada no checkpoint; "
+                "reprocessamento financeiro bloqueado."
+            )
+            return {
+                "tipo": "cartao",
+                "nome": nome_cliente,
+                "telefone": telefone_cliente,
+                "tentativas": 1,
+            }
+
         for tentativa in range(1, self.MAX_TENTATIVAS_ITEM + 1):
             try:
                 self.verificar_controle_execucao()
@@ -4231,6 +4315,17 @@ Checkout - Foco Aluguel de Carros"""
                 raise
             except Exception as e:
                 self.adicionar_log(f"Falha no contrato {numero_contrato} na tentativa {tentativa}: {e}")
+                if self._checkpoint_api_ja_cobrado(numero_contrato, valor_pagamento):
+                    self.adicionar_log(
+                        f"Wallet API: contrato {numero_contrato} foi cobrado com sucesso no cartão antes da falha; "
+                        "nenhuma nova tentativa financeira será feita."
+                    )
+                    return {
+                        "tipo": "cartao",
+                        "nome": nome_cliente,
+                        "telefone": telefone_cliente,
+                        "tentativas": tentativa,
+                    }
                 if tentativa < self.MAX_TENTATIVAS_ITEM:
                     self.adicionar_log("Renovando o contexto da API antes da proxima tentativa tecnica.")
                     continue
