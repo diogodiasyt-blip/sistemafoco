@@ -3999,7 +3999,7 @@ Segue informações sobre o pagamento da sua {descricao_cobranca}. Tentamos real
 
 Link de pagamento : {link_pagamento}
  
-PRAZO DE 48H.
+PRAZO DE 6H.
 
 -> * O não pagamento acarretará em inclusão de juros e/ou busca/apreensão
 
